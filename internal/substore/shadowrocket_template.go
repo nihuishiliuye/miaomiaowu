@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -16,7 +18,7 @@ type ShadowrocketTemplateProducer struct {
 // NewShadowrocketTemplateProducer creates a new Shadowrocket template producer
 func NewShadowrocketTemplateProducer() *ShadowrocketTemplateProducer {
 	return &ShadowrocketTemplateProducer{
-		producerType: "shadowrocket",
+		producerType: "clash-to-shadowrocket",
 		helper:       NewProxyHelper(),
 	}
 }
@@ -198,6 +200,7 @@ func (p *ShadowrocketTemplateProducer) generateProxies(proxies []Proxy, opts *Pr
 }
 
 // formatProxyLine 将节点转换为 Shadowrocket 单行格式
+// 格式: name = type, server, port, key=value, key=value, ...
 func (p *ShadowrocketTemplateProducer) formatProxyLine(proxy Proxy) string {
 	proxyType := GetString(proxy, "type")
 	name := GetString(proxy, "name")
@@ -208,16 +211,13 @@ func (p *ShadowrocketTemplateProducer) formatProxyLine(proxy Proxy) string {
 		return ""
 	}
 
-	// 构建参数列表
+	// 构建参数列表（不含 name，name 用 = 连接）
 	var params []string
-	params = append(params, name)
-	params = append(params, proxyType)
 	params = append(params, server)
 	params = append(params, fmt.Sprintf("%d", port))
 
 	switch proxyType {
 	case "ss":
-		// Shadowsocks: name=ss,server,port,encrypt-method=xxx,password=xxx,obfs=xxx,obfs-host=xxx,tfo=1
 		if method := GetString(proxy, "cipher"); method != "" {
 			params = append(params, fmt.Sprintf("encrypt-method=%s", method))
 		}
@@ -234,15 +234,14 @@ func (p *ShadowrocketTemplateProducer) formatProxyLine(proxy Proxy) string {
 				}
 			}
 		}
-		if udp := GetBool(proxy, "udp"); udp {
+		if GetBool(proxy, "udp") {
 			params = append(params, "udp-relay=true")
 		}
-		if tfo := GetBool(proxy, "tfo"); tfo {
+		if GetBool(proxy, "tfo") {
 			params = append(params, "tfo=1")
 		}
 
 	case "vmess":
-		// VMess: name=vmess,server,port,username=uuid,alterId=0,method=auto,tls=true,skip-cert-verify=true,obfs=websocket,obfs-path=/,obfs-header=Host:xxx,tfo=1
 		if uuid := GetString(proxy, "uuid"); uuid != "" {
 			params = append(params, fmt.Sprintf("username=%s", uuid))
 		}
@@ -255,79 +254,67 @@ func (p *ShadowrocketTemplateProducer) formatProxyLine(proxy Proxy) string {
 		}
 		params = append(params, fmt.Sprintf("method=%s", cipher))
 
-		if tls := GetBool(proxy, "tls"); tls {
+		if GetBool(proxy, "tls") {
 			params = append(params, "tls=true")
-			if skipCertVerify := GetBool(proxy, "skip-cert-verify"); skipCertVerify {
+			if GetBool(proxy, "skip-cert-verify") {
 				params = append(params, "skip-cert-verify=true")
 			}
-			// transformProxies 已将 sni 转换为 servername
 			if servername := GetString(proxy, "servername"); servername != "" {
 				params = append(params, fmt.Sprintf("sni=%s", servername))
 			}
 		}
 
-		network := GetString(proxy, "network")
-		if network != "" {
-			switch network {
-			case "ws":
-				params = append(params, "obfs=websocket")
-				if wsOpts := GetMap(proxy, "ws-opts"); wsOpts != nil {
-					if path := GetString(wsOpts, "path"); path != "" {
-						params = append(params, fmt.Sprintf("obfs-path=%s", path))
-					}
-					if headers := GetMap(wsOpts, "headers"); headers != nil {
-						if host := GetString(headers, "Host"); host != "" {
-							params = append(params, fmt.Sprintf("obfs-header=Host:%s", host))
-						}
-					}
-				}
-			case "h2", "http":
-				params = append(params, "obfs=http")
-				if h2Opts := GetMap(proxy, "h2-opts"); h2Opts != nil {
-					if path := GetString(h2Opts, "path"); path != "" {
-						params = append(params, fmt.Sprintf("obfs-path=%s", path))
-					}
-					if host := GetString(h2Opts, "host"); host != "" {
-						params = append(params, fmt.Sprintf("obfs-header=Host:%s", host))
-					}
-				}
-			case "grpc":
-				params = append(params, "obfs=grpc")
-				if grpcOpts := GetMap(proxy, "grpc-opts"); grpcOpts != nil {
-					if serviceName := GetString(grpcOpts, "grpc-service-name"); serviceName != "" {
-						params = append(params, fmt.Sprintf("obfs-path=%s", serviceName))
-					}
-				}
-			}
-		}
+		p.appendNetworkParams(proxy, &params)
 
-		if tfo := GetBool(proxy, "tfo"); tfo {
+		if GetBool(proxy, "tfo") {
 			params = append(params, "tfo=1")
 		}
 
 	case "vless":
-		// VLESS: name=vless,server,port,username=uuid,tls=true,skip-cert-verify=true,sni=xxx,obfs=websocket,obfs-path=/,obfs-header=Host:xxx,tfo=1
 		if uuid := GetString(proxy, "uuid"); uuid != "" {
 			params = append(params, fmt.Sprintf("username=%s", uuid))
 		}
 
-		if tls := GetBool(proxy, "tls"); tls {
+		// encryption
+		if encryption := GetString(proxy, "encryption"); encryption != "" {
+			params = append(params, fmt.Sprintf("encryption=%s", encryption))
+		}
+
+		if GetBool(proxy, "tls") {
 			params = append(params, "tls=true")
-			if skipCertVerify := GetBool(proxy, "skip-cert-verify"); skipCertVerify {
+			if GetBool(proxy, "skip-cert-verify") {
 				params = append(params, "skip-cert-verify=true")
 			}
-			// transformProxies 已将 sni 转换为 servername
 			if servername := GetString(proxy, "servername"); servername != "" {
 				params = append(params, fmt.Sprintf("sni=%s", servername))
 			}
 		}
 
-		// Flow
+		// ALPN
+		if alpn := GetStringSlice(proxy, "alpn"); len(alpn) > 0 {
+			params = append(params, fmt.Sprintf("alpn=%s", strings.Join(alpn, ",")))
+		}
+
+		// Reality
+		if realityOpts := GetMap(proxy, "reality-opts"); realityOpts != nil {
+			if pubKey := GetString(realityOpts, "public-key"); pubKey != "" {
+				params = append(params, fmt.Sprintf("pbk=%s", pubKey))
+			}
+			if shortID := GetString(realityOpts, "short-id"); shortID != "" {
+				params = append(params, fmt.Sprintf("sid=%s", shortID))
+			}
+		}
+
+		// Client fingerprint
+		if fp := GetString(proxy, "client-fingerprint"); fp != "" {
+			params = append(params, fmt.Sprintf("fp=%s", fp))
+		}
+
 		if flow := GetString(proxy, "flow"); flow != "" {
 			params = append(params, fmt.Sprintf("flow=%s", flow))
 		}
 
-		// 处理 xhttp/splithttp (transformProxies 已设置 obfs, path, obfsParam)
+		// xhttp/splithttp (transformProxies 已设置 obfs, path, obfsParam)
 		if obfs := GetString(proxy, "obfs"); obfs == "xhttp" {
 			params = append(params, "obfs=xhttp")
 			if path := GetString(proxy, "path"); path != "" {
@@ -337,67 +324,124 @@ func (p *ShadowrocketTemplateProducer) formatProxyLine(proxy Proxy) string {
 				params = append(params, fmt.Sprintf("obfs-header=Host:%s", obfsParam))
 			}
 		} else {
-			// 处理其他 network 类型
-			network := GetString(proxy, "network")
-			if network != "" {
-				switch network {
-				case "ws":
-					params = append(params, "obfs=websocket")
-					if wsOpts := GetMap(proxy, "ws-opts"); wsOpts != nil {
-						if path := GetString(wsOpts, "path"); path != "" {
-							params = append(params, fmt.Sprintf("obfs-path=%s", path))
-						}
-						if headers := GetMap(wsOpts, "headers"); headers != nil {
-							if host := GetString(headers, "Host"); host != "" {
-								params = append(params, fmt.Sprintf("obfs-header=Host:%s", host))
-							}
-						}
-					}
-				case "h2", "http":
-					params = append(params, "obfs=http")
-					if h2Opts := GetMap(proxy, "h2-opts"); h2Opts != nil {
-						if path := GetString(h2Opts, "path"); path != "" {
-							params = append(params, fmt.Sprintf("obfs-path=%s", path))
-						}
-						if host := GetString(h2Opts, "host"); host != "" {
-							params = append(params, fmt.Sprintf("obfs-header=Host:%s", host))
-						}
-					}
-				case "grpc":
-					params = append(params, "obfs=grpc")
-					if grpcOpts := GetMap(proxy, "grpc-opts"); grpcOpts != nil {
-						if serviceName := GetString(grpcOpts, "grpc-service-name"); serviceName != "" {
-							params = append(params, fmt.Sprintf("obfs-path=%s", serviceName))
-						}
-					}
-				}
-			}
+			p.appendNetworkParams(proxy, &params)
 		}
 
-		if tfo := GetBool(proxy, "tfo"); tfo {
+		if GetBool(proxy, "tfo") {
 			params = append(params, "tfo=1")
 		}
 
 	case "trojan":
-		// Trojan: name=trojan,server,port,password=xxx,skip-cert-verify=true,sni=xxx,tfo=1
 		if password := GetString(proxy, "password"); password != "" {
 			params = append(params, fmt.Sprintf("password=%s", password))
 		}
-		if skipCertVerify := GetBool(proxy, "skip-cert-verify"); skipCertVerify {
+		if GetBool(proxy, "skip-cert-verify") {
 			params = append(params, "skip-cert-verify=true")
 		}
 		if sni := GetString(proxy, "sni"); sni != "" {
 			params = append(params, fmt.Sprintf("sni=%s", sni))
+		} else if servername := GetString(proxy, "servername"); servername != "" {
+			params = append(params, fmt.Sprintf("sni=%s", servername))
 		}
-		if tfo := GetBool(proxy, "tfo"); tfo {
+
+		// Trojan 也支持 ws/grpc 传输
+		p.appendNetworkParams(proxy, &params)
+
+		if GetBool(proxy, "tfo") {
 			params = append(params, "tfo=1")
 		}
-		if udp := GetBool(proxy, "udp"); udp {
+		if GetBool(proxy, "udp") {
+			params = append(params, "udp-relay=true")
+		}
+
+	case "hysteria2":
+		if password := GetString(proxy, "password"); password != "" {
+			params = append(params, fmt.Sprintf("password=%s", password))
+		}
+		if GetBool(proxy, "skip-cert-verify") {
+			params = append(params, "skip-cert-verify=true")
+		}
+		if sni := GetString(proxy, "sni"); sni != "" {
+			params = append(params, fmt.Sprintf("sni=%s", sni))
+		} else if servername := GetString(proxy, "servername"); servername != "" {
+			params = append(params, fmt.Sprintf("sni=%s", servername))
+		}
+		if alpn := GetStringSlice(proxy, "alpn"); len(alpn) > 0 {
+			params = append(params, fmt.Sprintf("alpn=%s", strings.Join(alpn, ",")))
+		}
+		if obfs := GetString(proxy, "obfs"); obfs != "" {
+			params = append(params, fmt.Sprintf("obfs=%s", obfs))
+			if obfsPassword := GetString(proxy, "obfs-password"); obfsPassword != "" {
+				params = append(params, fmt.Sprintf("obfs-password=%s", obfsPassword))
+			}
+		}
+		if GetBool(proxy, "fast-open") {
+			params = append(params, "tfo=1")
+		}
+		if GetBool(proxy, "udp") {
+			params = append(params, "udp-relay=true")
+		}
+
+	case "hysteria":
+		if authStr := GetString(proxy, "auth-str"); authStr != "" {
+			params = append(params, fmt.Sprintf("auth=%s", authStr))
+		}
+		if GetBool(proxy, "skip-cert-verify") {
+			params = append(params, "skip-cert-verify=true")
+		}
+		if sni := GetString(proxy, "sni"); sni != "" {
+			params = append(params, fmt.Sprintf("peer=%s", sni))
+		} else if servername := GetString(proxy, "servername"); servername != "" {
+			params = append(params, fmt.Sprintf("peer=%s", servername))
+		}
+		if alpn := GetStringSlice(proxy, "alpn"); len(alpn) > 0 {
+			params = append(params, fmt.Sprintf("alpn=%s", strings.Join(alpn, ",")))
+		}
+		if obfs := GetString(proxy, "obfs"); obfs != "" {
+			params = append(params, fmt.Sprintf("obfs=%s", obfs))
+		}
+		if up := GetString(proxy, "up"); up != "" {
+			params = append(params, fmt.Sprintf("up=%s", up))
+		}
+		if down := GetString(proxy, "down"); down != "" {
+			params = append(params, fmt.Sprintf("down=%s", down))
+		}
+		if GetBool(proxy, "fast-open") {
+			params = append(params, "tfo=1")
+		}
+		if GetBool(proxy, "udp") {
+			params = append(params, "udp-relay=true")
+		}
+
+	case "tuic":
+		if uuid := GetString(proxy, "uuid"); uuid != "" {
+			params = append(params, fmt.Sprintf("uuid=%s", uuid))
+		}
+		if password := GetString(proxy, "password"); password != "" {
+			params = append(params, fmt.Sprintf("password=%s", password))
+		}
+		if GetBool(proxy, "skip-cert-verify") {
+			params = append(params, "skip-cert-verify=true")
+		}
+		if sni := GetString(proxy, "sni"); sni != "" {
+			params = append(params, fmt.Sprintf("sni=%s", sni))
+		} else if servername := GetString(proxy, "servername"); servername != "" {
+			params = append(params, fmt.Sprintf("sni=%s", servername))
+		}
+		if alpn := GetStringSlice(proxy, "alpn"); len(alpn) > 0 {
+			params = append(params, fmt.Sprintf("alpn=%s", strings.Join(alpn, ",")))
+		}
+		if version := GetInt(proxy, "version"); version > 0 {
+			params = append(params, fmt.Sprintf("version=%d", version))
+		}
+		if GetBool(proxy, "fast-open") {
+			params = append(params, "tfo=1")
+		}
+		if GetBool(proxy, "udp") {
 			params = append(params, "udp-relay=true")
 		}
 
 	case "http", "https":
-		// HTTP/HTTPS: name=http,server,port,username=xxx,password=xxx,tls=true,skip-cert-verify=true,tfo=1
 		if username := GetString(proxy, "username"); username != "" {
 			params = append(params, fmt.Sprintf("username=%s", username))
 		}
@@ -406,37 +450,51 @@ func (p *ShadowrocketTemplateProducer) formatProxyLine(proxy Proxy) string {
 		}
 		if proxyType == "https" || GetBool(proxy, "tls") {
 			params = append(params, "tls=true")
-			if skipCertVerify := GetBool(proxy, "skip-cert-verify"); skipCertVerify {
+			if GetBool(proxy, "skip-cert-verify") {
 				params = append(params, "skip-cert-verify=true")
 			}
 		}
-		if tfo := GetBool(proxy, "tfo"); tfo {
+		if GetBool(proxy, "tfo") {
 			params = append(params, "tfo=1")
 		}
 
 	case "socks5", "socks":
-		// SOCKS5: name=socks5,server,port,username=xxx,password=xxx,tls=true,skip-cert-verify=true,tfo=1
 		if username := GetString(proxy, "username"); username != "" {
 			params = append(params, fmt.Sprintf("username=%s", username))
 		}
 		if password := GetString(proxy, "password"); password != "" {
 			params = append(params, fmt.Sprintf("password=%s", password))
 		}
-		if tls := GetBool(proxy, "tls"); tls {
+		if GetBool(proxy, "tls") {
 			params = append(params, "tls=true")
-			if skipCertVerify := GetBool(proxy, "skip-cert-verify"); skipCertVerify {
+			if GetBool(proxy, "skip-cert-verify") {
 				params = append(params, "skip-cert-verify=true")
 			}
 		}
-		if tfo := GetBool(proxy, "tfo"); tfo {
+		if GetBool(proxy, "tfo") {
 			params = append(params, "tfo=1")
 		}
-		if udp := GetBool(proxy, "udp"); udp {
+		if GetBool(proxy, "udp") {
+			params = append(params, "udp-relay=true")
+		}
+
+	case "anytls":
+		if password := GetString(proxy, "password"); password != "" {
+			params = append(params, fmt.Sprintf("password=%s", password))
+		}
+		if GetBool(proxy, "skip-cert-verify") {
+			params = append(params, "skip-cert-verify=true")
+		}
+		if sni := GetString(proxy, "sni"); sni != "" {
+			params = append(params, fmt.Sprintf("sni=%s", sni))
+		} else if servername := GetString(proxy, "servername"); servername != "" {
+			params = append(params, fmt.Sprintf("sni=%s", servername))
+		}
+		if GetBool(proxy, "udp") {
 			params = append(params, "udp-relay=true")
 		}
 
 	case "wireguard":
-		// WireGuard 配置较复杂，记录警告
 		log.Printf("[Shadowrocket] WireGuard节点 '%s' 可能需要手动配置", name)
 		return fmt.Sprintf("# WireGuard节点需要手动配置: %s", name)
 
@@ -445,7 +503,85 @@ func (p *ShadowrocketTemplateProducer) formatProxyLine(proxy Proxy) string {
 		return fmt.Sprintf("# 不支持的节点类型 %s: %s", proxyType, name)
 	}
 
-	return strings.Join(params, ",")
+	return fmt.Sprintf("%s = %s, %s", name, proxyType, strings.Join(params, ", "))
+}
+
+// appendNetworkParams 添加 network 传输层参数（ws/h2/grpc）
+func (p *ShadowrocketTemplateProducer) appendNetworkParams(proxy Proxy, params *[]string) {
+	network := GetString(proxy, "network")
+	if network == "" {
+		return
+	}
+
+	switch network {
+	case "ws":
+		*params = append(*params, "obfs=websocket")
+		if wsOpts := GetMap(proxy, "ws-opts"); wsOpts != nil {
+			if path := GetString(wsOpts, "path"); path != "" {
+				*params = append(*params, fmt.Sprintf("obfs-path=%s", path))
+			}
+			if headers := GetMap(wsOpts, "headers"); headers != nil {
+				if host := GetString(headers, "Host"); host != "" {
+					*params = append(*params, fmt.Sprintf("obfs-header=Host:%s", host))
+				}
+			}
+		}
+	case "h2":
+		*params = append(*params, "obfs=h2")
+		if h2Opts := GetMap(proxy, "h2-opts"); h2Opts != nil {
+			if path := GetString(h2Opts, "path"); path != "" {
+				*params = append(*params, fmt.Sprintf("obfs-path=%s", path))
+			}
+			if host := h2Opts["host"]; host != nil {
+				var hostStr string
+				if s, ok := host.(string); ok {
+					hostStr = s
+				} else if slice, ok := host.([]interface{}); ok && len(slice) > 0 {
+					hostStr = fmt.Sprintf("%v", slice[0])
+				} else if slice, ok := host.([]string); ok && len(slice) > 0 {
+					hostStr = slice[0]
+				}
+				if hostStr != "" {
+					*params = append(*params, fmt.Sprintf("obfs-header=Host:%s", hostStr))
+				}
+			}
+		}
+	case "http":
+		*params = append(*params, "obfs=http")
+		if httpOpts := GetMap(proxy, "http-opts"); httpOpts != nil {
+			if path := httpOpts["path"]; path != nil {
+				if pathStr, ok := path.(string); ok && pathStr != "" {
+					*params = append(*params, fmt.Sprintf("obfs-path=%s", pathStr))
+				} else if pathSlice, ok := path.([]interface{}); ok && len(pathSlice) > 0 {
+					*params = append(*params, fmt.Sprintf("obfs-path=%v", pathSlice[0]))
+				} else if pathSlice, ok := path.([]string); ok && len(pathSlice) > 0 {
+					*params = append(*params, fmt.Sprintf("obfs-path=%s", pathSlice[0]))
+				}
+			}
+			if headers := GetMap(httpOpts, "headers"); headers != nil {
+				if host := headers["Host"]; host != nil {
+					var hostStr string
+					if s, ok := host.(string); ok {
+						hostStr = s
+					} else if slice, ok := host.([]interface{}); ok && len(slice) > 0 {
+						hostStr = fmt.Sprintf("%v", slice[0])
+					} else if slice, ok := host.([]string); ok && len(slice) > 0 {
+						hostStr = slice[0]
+					}
+					if hostStr != "" {
+						*params = append(*params, fmt.Sprintf("obfs-header=Host:%s", hostStr))
+					}
+				}
+			}
+		}
+	case "grpc":
+		*params = append(*params, "obfs=grpc")
+		if grpcOpts := GetMap(proxy, "grpc-opts"); grpcOpts != nil {
+			if serviceName := GetString(grpcOpts, "grpc-service-name"); serviceName != "" {
+				*params = append(*params, fmt.Sprintf("obfs-path=%s", serviceName))
+			}
+		}
+	}
 }
 
 // generateProxyGroups 生成 [Proxy Group] 部分
@@ -549,6 +685,7 @@ func (p *ShadowrocketTemplateProducer) generateRules(opts *ProduceOptions) strin
 	}
 
 	// 处理 rules
+	hasRules := false
 	if rules, ok := opts.FullConfig["rules"].([]interface{}); ok {
 		for _, rule := range rules {
 			if ruleStr, ok := rule.(string); ok {
@@ -556,13 +693,14 @@ func (p *ShadowrocketTemplateProducer) generateRules(opts *ProduceOptions) strin
 				if ruleLine != "" {
 					sb.WriteString(ruleLine)
 					sb.WriteString("\n")
+					hasRules = true
 				}
 			}
 		}
 	}
 
 	// 如果没有规则，添加默认规则
-	if len(sb.String()) < 50 {
+	if !hasRules {
 		sb.WriteString("GEOIP,CN,DIRECT\n")
 		sb.WriteString("FINAL,PROXY\n")
 	}
@@ -626,8 +764,18 @@ func (p *ShadowrocketTemplateProducer) transformProxies(proxies []Proxy, opts *P
 			if proxyType == "snell" && GetInt(proxy, "version") >= 4 {
 				continue
 			}
-			if proxyType == "mieru" {
+			if proxyType == "mieru" || proxyType == "sudoku" || proxyType == "naive" {
 				continue
+			}
+			// anytls with unsupported network
+			if proxyType == "anytls" {
+				network := GetString(proxy, "network")
+				if network != "" && network != "tcp" {
+					continue
+				}
+				if network == "tcp" && IsPresent(proxy, "reality-opts") {
+					continue
+				}
 			}
 		}
 
@@ -835,12 +983,69 @@ func (p *ShadowrocketTemplateProducer) transformProxies(proxies []Proxy, opts *P
 			}
 		}
 
+		// Handle WS network early data
+		if network == "ws" {
+			wsOpts := GetMap(transformed, "ws-opts")
+			if wsOpts == nil {
+				wsOpts = make(map[string]interface{})
+				transformed["ws-opts"] = wsOpts
+			}
+
+			path := GetString(wsOpts, "path")
+			if path != "" {
+				re := regexp.MustCompile(`^(.*?)(?:\?ed=(\d+))?$`)
+				matches := re.FindStringSubmatch(path)
+				if len(matches) > 0 {
+					wsOpts["path"] = matches[1]
+					if len(matches) > 2 && matches[2] != "" {
+						wsOpts["early-data-header-name"] = "Sec-WebSocket-Protocol"
+						ed, _ := strconv.Atoi(matches[2])
+						wsOpts["max-early-data"] = ed
+					}
+				}
+			} else {
+				wsOpts["path"] = "/"
+			}
+		}
+
+		// SS shadow-tls transformations
+		if proxyType == "ss" {
+			if IsPresent(transformed, "shadow-tls-password") && !IsPresent(transformed, "plugin") {
+				transformed["plugin"] = "shadow-tls"
+				pluginOpts := make(map[string]interface{})
+				pluginOpts["host"] = GetString(transformed, "shadow-tls-sni")
+				pluginOpts["password"] = GetString(transformed, "shadow-tls-password")
+				pluginOpts["version"] = GetInt(transformed, "shadow-tls-version")
+				transformed["plugin-opts"] = pluginOpts
+
+				delete(transformed, "shadow-tls-password")
+				delete(transformed, "shadow-tls-sni")
+				delete(transformed, "shadow-tls-version")
+			}
+		}
+
 		// Handle plugin-opts TLS
 		if pluginOpts := GetMap(transformed, "plugin-opts"); pluginOpts != nil {
 			if GetBool(pluginOpts, "tls") && IsPresent(transformed, "skip-cert-verify") {
 				pluginOpts["skip-cert-verify"] = GetBool(transformed, "skip-cert-verify")
 			}
 		}
+
+		// Delete tls for certain proxy types
+		deleteTLSTypes := map[string]bool{
+			"trojan": true, "tuic": true, "hysteria": true,
+			"hysteria2": true, "juicity": true, "anytls": true,
+			"naive": true,
+		}
+		if deleteTLSTypes[proxyType] {
+			delete(transformed, "tls")
+		}
+
+		// Handle tls-fingerprint -> fingerprint
+		if IsPresent(transformed, "tls-fingerprint") {
+			transformed["fingerprint"] = GetString(transformed, "tls-fingerprint")
+		}
+		delete(transformed, "tls-fingerprint")
 
 		// Clean up fields
 		p.helper.RemoveProxyFields(transformed,

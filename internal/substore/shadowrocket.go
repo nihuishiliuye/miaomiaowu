@@ -53,12 +53,13 @@ func (p *ShadowrocketProducer) Produce(proxies []Proxy, outputType string, opts 
 				continue
 			}
 			// 先屏蔽 vless enc, 现在支持的有限 20260414, 后续再打开
-			if proxyType == "vless" {
-				encryption := GetString(proxy, "encryption")
-				if encryption != "" && encryption != "none" {
-					continue
-				}
-			}
+			// 支持 vless enc 20260508
+			// if proxyType == "vless" {
+			// 	encryption := GetString(proxy, "encryption")
+			// 	if encryption != "" && encryption != "none" {
+			// 		continue
+			// 	}
+			// }
 			// anytls with unsupported network
 			if proxyType == "anytls" {
 				network := GetString(proxy, "network")

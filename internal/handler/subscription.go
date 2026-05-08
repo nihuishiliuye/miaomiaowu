@@ -678,7 +678,7 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 		// Set content type and extension based on client type
 		switch clientType {
-		case "surge", "surgemac", "loon", "qx", "surfboard", "shadowrocket", "clash-to-surge":
+		case "surge", "surgemac", "loon", "qx", "surfboard", "shadowrocket", "clash-to-surge", "clash-to-shadowrocket":
 			// Text-based formats
 			contentType = "text/plain; charset=utf-8"
 			ext = ".txt"
@@ -1245,7 +1245,7 @@ func (h *SubscriptionHandler) serveTokenInvalidResponse(w http.ResponseWriter, r
 
 			// 根据客户端类型设置content type和扩展名
 			switch clientType {
-			case "surge", "surgemac", "loon", "qx", "surfboard", "shadowrocket", "clash-to-surge":
+			case "surge", "surgemac", "loon", "qx", "surfboard", "shadowrocket", "clash-to-surge", "clash-to-shadowrocket":
 				contentType = "text/plain; charset=utf-8"
 				ext = ".txt"
 			case "sing-box":

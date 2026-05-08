@@ -31,6 +31,7 @@ func NewProducerFactory() *ProducerFactory {
 	factory.Register(NewLoonProducer())
 	factory.Register(NewSingboxProducer())
 	factory.Register(NewEgernProducer())
+	factory.Register(NewShadowrocketTemplateProducer())
 
 	return factory
 }
