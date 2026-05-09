@@ -689,8 +689,8 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		ext = ".yaml"
 	}
 
-	// clash 和 clashmeta 类型直接输出源文件, 不需要转换
-	if clientType != "" && clientType != "clash" && clientType != "clashmeta" {
+	// clash/classmeta/clash-to-shadowrocket 直接输出 Clash YAML, 不需要转换
+	if clientType != "" && clientType != "clash" && clientType != "clashmeta" && clientType != "clash-to-shadowrocket" {
 		convertedData, err := h.convertSubscription(r.Context(), data, clientType)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("failed to convert subscription for client %s: %w", clientType, err))
@@ -700,7 +700,7 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 		// Set content type and extension based on client type
 		switch clientType {
-		case "surge", "surgemac", "loon", "qx", "surfboard", "shadowrocket", "clash-to-surge", "clash-to-shadowrocket":
+		case "surge", "surgemac", "loon", "qx", "surfboard", "shadowrocket", "clash-to-surge":
 			contentType = "text/plain; charset=utf-8"
 			ext = ".txt"
 		case "sing-box":
@@ -1259,8 +1259,8 @@ func (h *SubscriptionHandler) serveTokenInvalidResponse(w http.ResponseWriter, r
 	contentType := "text/yaml; charset=utf-8"
 	ext := ".yaml"
 
-	// 如果指定了客户端类型且不是clash/clashmeta，进行转换
-	if clientType != "" && clientType != "clash" && clientType != "clashmeta" {
+	// 如果指定了客户端类型且不是clash/clashmeta/clash-to-shadowrocket，进行转换
+	if clientType != "" && clientType != "clash" && clientType != "clashmeta" && clientType != "clash-to-shadowrocket" {
 		convertedData, err := h.convertSubscription(r.Context(), data, clientType)
 		if err != nil {
 			// 转换失败，记录日志但继续返回YAML
@@ -1270,7 +1270,7 @@ func (h *SubscriptionHandler) serveTokenInvalidResponse(w http.ResponseWriter, r
 
 			// 根据客户端类型设置content type和扩展名
 			switch clientType {
-			case "surge", "surgemac", "loon", "qx", "surfboard", "shadowrocket", "clash-to-surge", "clash-to-shadowrocket":
+			case "surge", "surgemac", "loon", "qx", "surfboard", "shadowrocket", "clash-to-surge":
 				contentType = "text/plain; charset=utf-8"
 				ext = ".txt"
 			case "sing-box":

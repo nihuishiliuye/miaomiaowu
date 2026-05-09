@@ -185,7 +185,7 @@ function SubscriptionPage() {
     return url.toString()
   }
 
-  const handleCopy = async (fileId: number, urlText: string, clientName: string) => {
+  const handleCopy = async (fileId: number, urlText: string, clientName: string, clientType?: string) => {
     // 更新该订阅文件显示的URL
     setDisplayURLs(prev => ({ ...prev, [fileId]: urlText }))
 
@@ -193,6 +193,9 @@ function SubscriptionPage() {
       try {
         await navigator.clipboard.writeText(urlText)
         toast.success(`${clientName} 订阅链接已复制`)
+        if (clientType === 'clash-to-shadowrocket') {
+          toast.info('请在 Shadowrocket 配置界面点击右上角 + 号，选择添加订阅链接', { duration: 5000 })
+        }
         return
       } catch (_) {
         // fall through
@@ -318,7 +321,7 @@ function SubscriptionPage() {
                                 return (
                                   <DropdownMenuItem
                                     key={client.type}
-                                    onClick={() => handleCopy(file.id, clientURL, client.name)}
+                                    onClick={() => handleCopy(file.id, clientURL, client.name, client.type)}
                                     className='cursor-pointer'
                                   >
                                     <img src={client.icon} alt={client.name} className='mr-2 size-4' />
