@@ -771,18 +771,28 @@ func (p *StashProducer) generateFullConfig(proxies []Proxy, opts *ProduceOptions
 		}
 		for _, key := range sortedKeys {
 			val := nameserverPolicy[key]
+			// stash 文档显示支持多个dns server, 实际上不支持, 先只取第一个
+			// sb.WriteString(":\n")
+			// if servers, ok := val.([]interface{}); ok {
+			// 	for _, s := range servers {
+			// 		if sStr, ok := s.(string); ok {
+			// 			sb.WriteString("      - ")
+			// 			sb.WriteString(sStr)
+			// 			sb.WriteString("\n")
+			// 		}
+			// 	}
+			// }
 			sb.WriteString("    ")
 			sb.WriteString(key)
-			sb.WriteString(":\n")
-			if servers, ok := val.([]interface{}); ok {
-				for _, s := range servers {
-					if sStr, ok := s.(string); ok {
-						sb.WriteString("      - ")
-						sb.WriteString(sStr)
-						sb.WriteString("\n")
-					}
+			sb.WriteString(": ")
+			if servers, ok := val.([]interface{}); ok && len(servers) > 0 {
+				if sStr, ok := servers[0].(string); ok {
+					sb.WriteString(sStr)
 				}
+			} else if sStr, ok := val.(string); ok {
+				sb.WriteString(sStr)
 			}
+			sb.WriteString("\n")
 		}
 	}
 
