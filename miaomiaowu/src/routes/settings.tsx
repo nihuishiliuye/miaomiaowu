@@ -482,7 +482,7 @@ function TwoFactorCard() {
     queryKey: ['2fa-status'],
     queryFn: async () => {
       const res = await api.get('/api/user/2fa/status')
-      return res.data as { enabled: boolean; system_enabled: boolean }
+      return res.data as { enabled: boolean }
     },
     staleTime: 30_000,
   })
@@ -536,8 +536,6 @@ function TwoFactorCard() {
       setDisableCode('')
     },
   })
-
-  if (!tfStatus?.system_enabled) return null
 
   const resetSetup = () => {
     setSetupStep('password')

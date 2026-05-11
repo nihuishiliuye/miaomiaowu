@@ -289,7 +289,6 @@ type SystemConfig struct {
 	NotifyDailyTraffic     bool
 	NotifyExpiry           bool
 	NotifyDailyTrafficTime string // "HH:MM" default "08:00"
-	EnableTwoFactor        bool
 }
 
 // ExternalSubscription represents an external subscription URL imported by user.
@@ -4695,8 +4694,7 @@ SELECT proxy_groups_source_url, client_compatibility_mode, silent_mode, silent_m
        COALESCE(notify_enabled, 0), COALESCE(telegram_bot_token, ''), COALESCE(telegram_chat_id, ''),
        COALESCE(notify_subscribe_fetch, 1), COALESCE(notify_login, 1), COALESCE(notify_ip_ban, 1),
        COALESCE(notify_silent_mode, 1), COALESCE(notify_daily_traffic, 0), COALESCE(notify_expiry, 1),
-       COALESCE(notify_daily_traffic_time, '08:00'),
-       COALESCE(enable_two_factor, 0)
+       COALESCE(notify_daily_traffic_time, '08:00')
 FROM system_config
 WHERE id = 1
 `
@@ -4706,7 +4704,6 @@ WHERE id = 1
 	var enableShortLinkInt, enableSubTrafficHeaderInt, enableOverrideScriptsInt int
 	var notifyEnabledInt, notifySubFetchInt, notifyLoginInt, notifyIPBanInt int
 	var notifySilentModeInt, notifyDailyTrafficInt, notifyExpiryInt int
-	var enableTwoFactorInt int
 	err := r.db.QueryRowContext(ctx, query).Scan(
 		&cfg.ProxyGroupsSourceURL, &compatibilityMode, &silentMode, &silentModeTimeout,
 		&enableSubInfoNodes, &cfg.SubInfoExpirePrefix, &cfg.SubInfoTrafficPrefix,
@@ -4715,7 +4712,6 @@ WHERE id = 1
 		&notifySubFetchInt, &notifyLoginInt, &notifyIPBanInt,
 		&notifySilentModeInt, &notifyDailyTrafficInt, &notifyExpiryInt,
 		&cfg.NotifyDailyTrafficTime,
-		&enableTwoFactorInt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -4748,7 +4744,6 @@ WHERE id = 1
 	cfg.NotifySilentMode = notifySilentModeInt != 0
 	cfg.NotifyDailyTraffic = notifyDailyTrafficInt != 0
 	cfg.NotifyExpiry = notifyExpiryInt != 0
-	cfg.EnableTwoFactor = enableTwoFactorInt != 0
 	if cfg.SubInfoExpirePrefix == "" {
 		cfg.SubInfoExpirePrefix = "📅过期时间"
 	}
@@ -4786,7 +4781,6 @@ SET proxy_groups_source_url = ?,
     notify_daily_traffic = ?,
     notify_expiry = ?,
     notify_daily_traffic_time = ?,
-    enable_two_factor = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = 1
 `
@@ -4823,7 +4817,6 @@ WHERE id = 1
 		boolToInt(cfg.NotifySubscribeFetch), boolToInt(cfg.NotifyLogin), boolToInt(cfg.NotifyIPBan),
 		boolToInt(cfg.NotifySilentMode), boolToInt(cfg.NotifyDailyTraffic), boolToInt(cfg.NotifyExpiry),
 		dailyTrafficTime,
-		boolToInt(cfg.EnableTwoFactor),
 	)
 	if err != nil {
 		return fmt.Errorf("update system config: %w", err)

@@ -116,16 +116,9 @@ func NewTwoFactorStatusHandler(repo *storage.TrafficRepository) http.Handler {
 			return
 		}
 
-		sysCfg, err := repo.GetSystemConfig(r.Context())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]bool{
-			"enabled":        user.TOTPEnabled,
-			"system_enabled": sysCfg.EnableTwoFactor,
+			"enabled": user.TOTPEnabled,
 		})
 	})
 }
@@ -138,16 +131,6 @@ func NewTwoFactorSetupHandler(manager *auth.Manager, repo *storage.TrafficReposi
 		}
 
 		username := auth.UsernameFromContext(r.Context())
-
-		sysCfg, err := repo.GetSystemConfig(r.Context())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		if !sysCfg.EnableTwoFactor {
-			writeError(w, http.StatusForbidden, errors.New("two-factor authentication is not enabled"))
-			return
-		}
 
 		var payload struct {
 			Password string `json:"password"`

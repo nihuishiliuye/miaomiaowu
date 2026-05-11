@@ -62,7 +62,7 @@ function LoginPage() {
 
   if (isCheckingSetup) {
     return (
-      <div className='flex min-h-svh items-center justify-center bg-background'>
+      <div className='login-pixel-bg flex min-h-svh items-center justify-center'>
         <Card className='w-full max-w-sm'>
           <CardHeader className='space-y-2 text-center'>
             <CardTitle>加载中...</CardTitle>
@@ -156,7 +156,7 @@ function LoginView() {
   }
 
   return (
-    <div className='flex min-h-svh items-center justify-center bg-[radial-gradient(circle_at_top,_var(--tw-gradient-stops))] from-background via-muted/40 to-muted/60 px-4 py-12'>
+    <div className='login-pixel-bg flex min-h-svh items-center justify-center px-4 py-12'>
       <Card className='w-full max-w-sm shadow-lg'>
         <CardHeader className='space-y-2 text-center'>
           <CardTitle className='text-2xl font-semibold'>登录妙妙屋</CardTitle>
@@ -256,7 +256,7 @@ function TwoFactorStep({
   })
 
   return (
-    <div className='flex min-h-svh items-center justify-center bg-[radial-gradient(circle_at_top,_var(--tw-gradient-stops))] from-background via-muted/40 to-muted/60 px-4 py-12'>
+    <div className='login-pixel-bg flex min-h-svh items-center justify-center px-4 py-12'>
       <Card className='w-full max-w-sm shadow-lg'>
         <CardHeader className='space-y-2 text-center'>
           <CardTitle className='text-2xl font-semibold'>两步验证</CardTitle>
@@ -405,7 +405,7 @@ function InitialSetupView() {
   })
 
   return (
-    <div className='flex min-h-svh items-center justify-center bg-[radial-gradient(circle_at_top,_var(--tw-gradient-stops))] from-background via-muted/40 to-muted/60 px-4 py-12'>
+    <div className='login-pixel-bg flex min-h-svh items-center justify-center px-4 py-12'>
       <Card className='w-full max-w-md shadow-lg'>
         <CardHeader className='space-y-2 text-center'>
           <CardTitle className='text-2xl font-semibold'>欢迎使用妙妙屋</CardTitle>

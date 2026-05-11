@@ -37,7 +37,6 @@ type userConfigRequest struct {
 	SubInfoTrafficPrefix    string  `json:"sub_info_traffic_prefix"`
 	EnableSubTrafficHeader  bool    `json:"enable_sub_traffic_header"`
 	EnableOverrideScripts   bool    `json:"enable_override_scripts"`
-	EnableTwoFactor         bool    `json:"enable_two_factor"`
 }
 
 type userConfigResponse struct {
@@ -63,7 +62,6 @@ type userConfigResponse struct {
 	SubInfoTrafficPrefix    string  `json:"sub_info_traffic_prefix"`
 	EnableSubTrafficHeader  bool    `json:"enable_sub_traffic_header"`
 	EnableOverrideScripts   bool    `json:"enable_override_scripts"`
-	EnableTwoFactor         bool    `json:"enable_two_factor"`
 }
 
 func NewUserConfigHandler(repo *storage.TrafficRepository) http.Handler {
@@ -124,7 +122,6 @@ func handleGetUserConfig(w http.ResponseWriter, r *http.Request, repo *storage.T
 				SubInfoTrafficPrefix:    systemConfig.SubInfoTrafficPrefix,
 				EnableSubTrafficHeader:  systemConfig.EnableSubTrafficHeader,
 				EnableOverrideScripts:  systemConfig.EnableOverrideScripts,
-				EnableTwoFactor:         systemConfig.EnableTwoFactor,
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -158,7 +155,6 @@ func handleGetUserConfig(w http.ResponseWriter, r *http.Request, repo *storage.T
 		SubInfoTrafficPrefix:    systemConfig.SubInfoTrafficPrefix,
 		EnableSubTrafficHeader:  systemConfig.EnableSubTrafficHeader,
 		EnableOverrideScripts:  systemConfig.EnableOverrideScripts,
-		EnableTwoFactor:         systemConfig.EnableTwoFactor,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -263,7 +259,6 @@ func handleUpdateUserConfig(w http.ResponseWriter, r *http.Request, repo *storag
 	systemConfig.EnableShortLink = payload.EnableShortLink
 	systemConfig.EnableSubTrafficHeader = payload.EnableSubTrafficHeader
 	systemConfig.EnableOverrideScripts = payload.EnableOverrideScripts
-	systemConfig.EnableTwoFactor = payload.EnableTwoFactor
 	if err := repo.UpdateSystemConfig(r.Context(), systemConfig); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("update system config: %w", err))
 		return
@@ -306,7 +301,6 @@ func handleUpdateUserConfig(w http.ResponseWriter, r *http.Request, repo *storag
 		SubInfoTrafficPrefix:    subInfoTrafficPrefix,
 		EnableSubTrafficHeader:  payload.EnableSubTrafficHeader,
 		EnableOverrideScripts:  payload.EnableOverrideScripts,
-		EnableTwoFactor:         payload.EnableTwoFactor,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
