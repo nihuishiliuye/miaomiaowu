@@ -250,6 +250,11 @@ MIT License
 <details>
 <summary>更新日志</summary>
 
+### v0.7.1 (2026-05-15)
+- 🛠️ fix:shadowrocket 规则集格式错误
+- 🛠️ fix:ss协议密码错误base64
+- 🛠️ fix:链式代理丢失配置
+- 🛠️ fix:singbox vless encryption去除
 ### v0.7.0 (2026-05-14)
 - 🛠️ fix:ss协议password没有urldecode
 - 🌈 更新时增加数据备份
