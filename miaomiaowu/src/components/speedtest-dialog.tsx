@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Gauge, Loader2, History, ArrowLeft, RefreshCw, Settings2, Plus, Trash2, Copy, ExternalLink } from 'lucide-react'
@@ -85,8 +85,17 @@ export function SpeedTestDialog({
 }) {
   const queryClient = useQueryClient()
 
-  const [source, setSource] = useState<number | 'master'>('master')
-  const [threads, setThreads] = useState<1 | 8>(1)
+  const [source, setSource] = useState<number | 'master'>(() => {
+    const cached = localStorage.getItem('mmw-speedtest-source')
+    if (cached && cached !== 'master') {
+      const num = Number(cached)
+      if (!isNaN(num)) return num
+    }
+    return 'master'
+  })
+  const [threads, setThreads] = useState<1 | 8>(() => {
+    return localStorage.getItem('mmw-speedtest-threads') === '8' ? 8 : 1
+  })
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [historyNode, setHistoryNode] = useState<{ id: number; name: string } | null>(null)
   const [manageTesters, setManageTesters] = useState(false)
@@ -98,6 +107,14 @@ export function SpeedTestDialog({
     staleTime: 10000,
   })
   const testers = testersData?.testers || []
+
+  useEffect(() => { localStorage.setItem('mmw-speedtest-source', String(source)) }, [source])
+  useEffect(() => { localStorage.setItem('mmw-speedtest-threads', String(threads)) }, [threads])
+  useEffect(() => {
+    if (source !== 'master' && testers.length > 0 && !testers.some((t: any) => t.id === source)) {
+      setSource('master')
+    }
+  }, [testers, source])
 
   const { data: latestMap } = useLatestSpeedResults(open)
 

@@ -459,7 +459,10 @@ function NodesPage() {
   // 自定义标签状态
   const [manualTag, setManualTag] = useState<string>('手动输入')
   const [subscriptionTag, setSubscriptionTag] = useState<string>('')
-  const [skipCertVerify, setSkipCertVerify] = useState<boolean>(true)
+  const [skipCertVerify, setSkipCertVerify] = useState<boolean>(() => {
+    const cached = localStorage.getItem('mmw-skip-cert-verify')
+    return cached !== null ? cached === 'true' : true
+  })
 
   // 导入节点卡片折叠状态 - 默认折叠
   const [isInputCardExpanded, setIsInputCardExpanded] = useState(false)
@@ -639,6 +642,12 @@ function NodesPage() {
       localStorage.setItem(STORAGE_KEY_RENDER_MODE, renderMode)
     } catch {}
   }, [renderMode])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mmw-skip-cert-verify', String(skipCertVerify))
+    } catch {}
+  }, [skipCertVerify])
 
   // 处理 URL 参数：打开导入卡片并聚焦订阅输入框
   useEffect(() => {
@@ -1971,6 +1980,7 @@ function NodesPage() {
             const parsedNode = parseProxyUrl(uri)
             if (!parsedNode) return null
             const clashNode = toClashProxy(parsedNode)
+            if (skipCertVerify && clashNode) clashNode['skip-cert-verify'] = true
             const name = parsedNode.name || '未知'
             const normalizedParsed = cloneProxyWithName(parsedNode, name)
             const normalizedClash = cloneProxyWithName(clashNode, name)
@@ -1989,6 +1999,7 @@ function NodesPage() {
       } else if (data.proxies) {
         // Clash 格式：直接使用后端返回的节点
         parsed = data.proxies.map((clashNode) => {
+          if (skipCertVerify) clashNode['skip-cert-verify'] = true
           const proxyNode: ProxyNode = {
             name: clashNode.name || '未知',
             type: clashNode.type || 'unknown',
@@ -2183,6 +2194,7 @@ function NodesPage() {
           ...clashNode,
         }
         const name = proxyNode.name || '未知'
+        if (skipCertVerify) clashNode['skip-cert-verify'] = true
         const parsedProxy = cloneProxyWithName(proxyNode, name)
         const clashProxy = cloneProxyWithName(clashNode, name)
 
@@ -2209,6 +2221,7 @@ function NodesPage() {
       if (!trimmed || !trimmed.includes('://')) continue
       const parsedNode = parseProxyUrl(trimmed)
       const clashNode = parsedNode ? toClashProxy(parsedNode) : null
+      if (skipCertVerify && clashNode) clashNode['skip-cert-verify'] = true
       const name = parsedNode?.name || clashNode?.name || '未知'
       const normalizedParsed = cloneProxyWithName(parsedNode, name)
       const normalizedClash = cloneProxyWithName(clashNode, name)
@@ -2787,13 +2800,25 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                             ))}
                           </div>
                         )}
-                        <Input
-                          id='manual-tag'
-                          placeholder='手动输入'
-                          value={manualTag}
-                          onChange={(e) => setManualTag(e.target.value)}
-                          className='font-mono text-sm'
-                        />
+                        <div className='flex items-center gap-4'>
+                          <Input
+                            id='manual-tag'
+                            placeholder='手动输入'
+                            value={manualTag}
+                            onChange={(e) => setManualTag(e.target.value)}
+                            className='font-mono text-sm flex-1'
+                          />
+                          <div className='flex items-center gap-2 shrink-0'>
+                            <Switch
+                              id='skip-cert-verify-manual'
+                              checked={skipCertVerify}
+                              onCheckedChange={setSkipCertVerify}
+                            />
+                            <Label htmlFor='skip-cert-verify-manual' className='text-sm whitespace-nowrap cursor-pointer'>
+                              跳过证书验证
+                            </Label>
+                          </div>
+                        </div>
                         <p className='text-xs text-muted-foreground'>
                           为这些节点设置标签，用于节点管理中的分类和筛选
                         </p>
