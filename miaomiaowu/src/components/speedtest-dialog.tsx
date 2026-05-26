@@ -33,6 +33,15 @@ function relTime(t: string) {
   return `${Math.floor(h / 24)}天前`
 }
 
+// 前端 running → timeout 阈值:超过 15s 还在 running 视为卡住,允许重测
+const RUNNING_TIMEOUT_MS = 15_000
+function isStaleRunning(r: any): boolean {
+  if (r?.status !== 'running') return false
+  const started = r?.created_at ? new Date(r.created_at).getTime() : 0
+  if (!started) return false
+  return Date.now() - started > RUNNING_TIMEOUT_MS
+}
+
 function useLatestSpeedResults(enabled: boolean) {
   return useQuery({
     queryKey: ['speedtest-latest'],
@@ -50,12 +59,16 @@ function useLatestSpeedResults(enabled: boolean) {
 
 function SpeedCell({ r }: { r: any }) {
   if (!r) return <span className='text-muted-foreground text-xs'>—</span>
-  if (r.status === 'running')
+  if (r.status === 'running') {
+    if (isStaleRunning(r)) {
+      return <span className='text-orange-600 dark:text-orange-400 whitespace-nowrap text-xs' title='15 秒未返回结果,点击重测'>超时</span>
+    }
     return (
       <span className='text-muted-foreground inline-flex items-center gap-1 whitespace-nowrap text-xs'>
         <Loader2 className='h-3 w-3 animate-spin' />测速中
       </span>
     )
+  }
   if (r.status === 'failed')
     return <span className='text-red-600 dark:text-red-400 whitespace-nowrap text-xs' title={r.error}>失败</span>
   return (
@@ -65,13 +78,25 @@ function SpeedCell({ r }: { r: any }) {
   )
 }
 
-// 延迟单元格:可点击。无数据→Zap+"测延迟";测速中→spinner;已测→Zap+ms 可重测;失败→红 Zap+"失败"
+// 延迟单元格:可点击。无数据→Zap+"测延迟";测速中→spinner;超 15s→橙色"超时"可重测;已测→Zap+ms;失败→红 Zap+"失败"
 function LatencyCell({ r, onProbe, busy }: { r: any; onProbe: () => void; busy: boolean }) {
-  const running = r?.status === 'running' || busy
+  const running = (r?.status === 'running' && !isStaleRunning(r)) || busy
   if (running) {
     return (
       <button className='inline-flex items-center gap-1 text-muted-foreground text-xs font-mono' disabled>
         <Loader2 className='h-3 w-3 animate-spin' />
+      </button>
+    )
+  }
+  if (r?.status === 'running' && isStaleRunning(r)) {
+    return (
+      <button
+        type='button'
+        onClick={onProbe}
+        title='15 秒未返回结果,点击重测'
+        className='inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-orange-600 dark:text-orange-400 hover:bg-orange-500/10'
+      >
+        <Zap className='h-3 w-3' />超时
       </button>
     )
   }
@@ -141,6 +166,8 @@ export function SpeedTestDialog({
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [historyNode, setHistoryNode] = useState<{ id: number; name: string } | null>(null)
   const [manageTesters, setManageTesters] = useState(false)
+  // 点离线测速端 → 进 TestersView 自动重发安装命令的 tester id
+  const [autoRotateTesterId, setAutoRotateTesterId] = useState<number | null>(null)
 
   const { data: testersData } = useQuery({
     queryKey: ['speed-testers'],
@@ -198,16 +225,27 @@ export function SpeedTestDialog({
     })
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) { setManageTesters(false); setHistoryNode(null); onClose() } }}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) { setManageTesters(false); setHistoryNode(null); setAutoRotateTesterId(null); onClose() } }}>
       <DialogContent
         className='w-[95vw] sm:w-auto sm:!max-w-[95vw] max-h-[88vh] flex flex-col'
-        onInteractOutside={(e) => { e.preventDefault(); setManageTesters(false); setHistoryNode(null); onMinimize() }}
-        onEscapeKeyDown={(e) => { e.preventDefault(); setManageTesters(false); setHistoryNode(null); onMinimize() }}
+        // 点外面 / 按 Esc:在子视图里只退回主视图,不要最小化整个 dialog
+        onInteractOutside={(e) => {
+          e.preventDefault()
+          if (manageTesters) { setManageTesters(false); setAutoRotateTesterId(null); return }
+          if (historyNode) { setHistoryNode(null); return }
+          onMinimize()
+        }}
+        onEscapeKeyDown={(e) => {
+          e.preventDefault()
+          if (manageTesters) { setManageTesters(false); setAutoRotateTesterId(null); return }
+          if (historyNode) { setHistoryNode(null); return }
+          onMinimize()
+        }}
       >
         {historyNode ? (
           <HistoryView node={historyNode} onBack={() => setHistoryNode(null)} />
         ) : manageTesters ? (
-          <TestersView onBack={() => setManageTesters(false)} />
+          <TestersView onBack={() => { setManageTesters(false); setAutoRotateTesterId(null) }} autoRotateId={autoRotateTesterId} />
         ) : (
           <>
             <DialogHeader>
@@ -225,9 +263,17 @@ export function SpeedTestDialog({
                   key={x.id}
                   size='sm'
                   variant={source === x.id ? 'default' : 'outline'}
-                  disabled={!x.online}
-                  onClick={() => setSource(x.id)}
-                  title={x.online ? '' : '离线'}
+                  onClick={() => {
+                    if (x.online) {
+                      setSource(x.id)
+                    } else {
+                      // 离线测速端 → 进入管理视图并自动轮换 token、重发安装命令
+                      setAutoRotateTesterId(x.id)
+                      setManageTesters(true)
+                    }
+                  }}
+                  title={x.online ? '' : '测速端离线,点击重装'}
+                  className={x.online ? '' : 'opacity-60'}
                 >
                   {x.name}{x.online ? '' : ' (离线)'}
                 </Button>
@@ -275,7 +321,7 @@ export function SpeedTestDialog({
                     <tbody>
                       {rows.map((r) => {
                         const res = latestMap?.[r.id]
-                        const running = res?.status === 'running'
+                        const running = res?.status === 'running' && !isStaleRunning(res)
                         return (
                           <tr key={r.id} className='border-t'>
                             <td className='p-2 text-center'>
@@ -312,7 +358,7 @@ export function SpeedTestDialog({
                 <div className='max-h-[60vh] space-y-2 overflow-auto md:hidden'>
                   {rows.map((r) => {
                     const res = latestMap?.[r.id]
-                    const running = res?.status === 'running'
+                    const running = res?.status === 'running' && !isStaleRunning(res)
                     return (
                       <div key={r.id} className='rounded-lg border p-3'>
                         <div className='flex items-start gap-2'>
@@ -419,10 +465,11 @@ function HistoryView({ node, onBack }: { node: { id: number; name: string }; onB
   )
 }
 
-function TestersView({ onBack }: { onBack: () => void }) {
+// autoRotateId:打开时自动为该 tester 轮换 token、展示安装命令(从 source selector 点离线测速端时用)
+function TestersView({ onBack, autoRotateId }: { onBack: () => void; autoRotateId?: number | null }) {
   const qc = useQueryClient()
   const [name, setName] = useState('')
-  const [newToken, setNewToken] = useState('')
+  const [newCred, setNewCred] = useState<{ token: string; name: string } | null>(null)
   const masterURL = typeof window !== 'undefined' ? window.location.origin : ''
 
   const { data, isLoading } = useQuery({
@@ -431,8 +478,12 @@ function TestersView({ onBack }: { onBack: () => void }) {
     refetchInterval: 5000,
   })
   const createMut = useMutation({
-    mutationFn: async () => (await api.post('/api/admin/speedtest/testers/create', { name: name.trim() || 'home-tester' })).data,
-    onSuccess: (d) => { setNewToken(d.token); qc.invalidateQueries({ queryKey: ['speed-testers'] }); toast.success('测速端创建成功') },
+    mutationFn: async () => {
+      const finalName = name.trim() || 'mmwx-speedtester'
+      const d = (await api.post('/api/admin/speedtest/testers/create', { name: finalName })).data
+      return { ...d, name: finalName }
+    },
+    onSuccess: (d: any) => { setNewCred({ token: d.token, name: d.name }); qc.invalidateQueries({ queryKey: ['speed-testers'] }); toast.success('测速端创建成功') },
     onError: (e: any) => toast.error(e?.response?.data?.error || '创建失败'),
   })
   const revokeMut = useMutation({
@@ -440,10 +491,33 @@ function TestersView({ onBack }: { onBack: () => void }) {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['speed-testers'] }); toast.success('测速端已删除') },
     onError: () => toast.error('删除失败'),
   })
+  // 离线测速端轮换 token:库里只存哈希,原 token 不可恢复 → 必须生成新的让用户重跑安装命令
+  const rotateMut = useMutation({
+    mutationFn: async (tester: { id: number; name: string }) => {
+      const d = (await api.post('/api/admin/speedtest/testers/rotate-token', { id: tester.id })).data
+      return { token: d.token, name: tester.name }
+    },
+    onSuccess: (d) => { setNewCred(d); qc.invalidateQueries({ queryKey: ['speed-testers'] }); toast.success('已生成新令牌,请重新部署测速端') },
+    onError: (e: any) => toast.error(e?.response?.data?.error || '轮换令牌失败'),
+  })
+
+  useEffect(() => {
+    if (!autoRotateId) return
+    const tester = (data?.testers || []).find((x: any) => x.id === autoRotateId)
+    if (tester && !tester.online) {
+      rotateMut.mutate({ id: tester.id, name: tester.name || `tester-${tester.id}` })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRotateId, data?.testers])
+
   const copy = (s: string) => navigator.clipboard?.writeText(s).then(() => toast.success('已复制'), () => {})
+  // tester 名称在创建时就已存到主控库,二进制不需要 -name 参数
   const scriptBaseURL = 'https://raw.githubusercontent.com/MMWOrg/mmwX-plugins/refs/heads/main/speedtest/scripts'
-  const linuxCmd = newToken ? `curl -fsSL ${scriptBaseURL}/install.sh | bash -s -- -master ${masterURL} -token ${newToken}` : ''
-  const windowsCmd = newToken ? `irm ${scriptBaseURL}/install.ps1 -OutFile install.ps1; .\\install.ps1 -Master ${masterURL} -Token ${newToken}` : ''
+  const linuxCmd = newCred ? `curl -fsSL ${scriptBaseURL}/install.sh | bash -s -- -master ${masterURL} -token ${newCred.token}` : ''
+  const windowsCmd = newCred ? `irm ${scriptBaseURL}/install.ps1 -OutFile install.ps1; .\\install.ps1 -Master ${masterURL} -Token ${newCred.token}` : ''
+
+  // 从 source selector 点离线测速端进来:只展示该 tester 的安装命令,隐藏新建表单和列表
+  const compactMode = autoRotateId != null
 
   return (
     <>
@@ -455,31 +529,38 @@ function TestersView({ onBack }: { onBack: () => void }) {
         <DialogDescription>配置家用测速端，通过反向 WebSocket 连接到主控进行远程测速</DialogDescription>
       </DialogHeader>
       <div className='flex-1 space-y-4 overflow-y-auto py-2'>
-        <a
-          href='https://github.com/MMWOrg/mmwX-plugins/releases/latest'
-          target='_blank'
-          rel='noopener noreferrer'
-          className='flex items-center gap-1.5 text-xs text-primary hover:underline'
-        >
-          <ExternalLink className='size-3.5' />
-          在此下载测速端程序
-        </a>
-        <div className='flex items-end gap-2'>
-          <div className='flex-1 space-y-1'>
-            <Label className='text-xs'>测速端名称</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder='home-tester' className='text-xs' />
-          </div>
-          <Button size='sm' onClick={() => createMut.mutate()} disabled={createMut.isPending}>
-            <Plus className='mr-1 size-4' />创建
-          </Button>
-        </div>
+        {!compactMode && (
+          <>
+            <a
+              href='https://github.com/MMWOrg/mmwX-plugins/releases/latest'
+              target='_blank'
+              rel='noopener noreferrer'
+              className='flex items-center gap-1.5 text-xs text-primary hover:underline'
+            >
+              <ExternalLink className='size-3.5' />
+              在此下载测速端程序
+            </a>
+            <div className='flex items-end gap-2'>
+              <div className='flex-1 space-y-1'>
+                <Label className='text-xs'>测速端名称</Label>
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder='mmwx-speedtester' className='text-xs' />
+              </div>
+              <Button size='sm' onClick={() => createMut.mutate()} disabled={createMut.isPending}>
+                <Plus className='mr-1 size-4' />创建
+              </Button>
+            </div>
+          </>
+        )}
 
-        {newToken && (
+        {newCred && (
           <div className='border-primary/40 bg-primary/5 space-y-2 rounded-md border p-3'>
-            <Label className='text-primary text-xs'>Token（仅显示一次）</Label>
+            <Label className='text-primary text-xs flex items-center gap-2'>
+              Token（仅显示一次）
+              <span className='text-muted-foreground font-mono text-[10px]'>{newCred.name}</span>
+            </Label>
             <div className='flex gap-2'>
-              <Input readOnly value={newToken} className='font-mono text-xs' />
-              <Button variant='outline' size='icon' className='shrink-0' onClick={() => copy(newToken)}><Copy className='h-4 w-4' /></Button>
+              <Input readOnly value={newCred.token} className='font-mono text-xs' />
+              <Button variant='outline' size='icon' className='shrink-0' onClick={() => copy(newCred.token)}><Copy className='h-4 w-4' /></Button>
             </div>
             <Label className='mt-1.5 text-xs'>Linux / macOS 一键运行</Label>
             <div className='flex gap-2'>
@@ -495,7 +576,7 @@ function TestersView({ onBack }: { onBack: () => void }) {
           </div>
         )}
 
-        <div className='space-y-1.5'>
+        {!compactMode && <div className='space-y-1.5'>
           <Label className='flex items-center gap-1 text-xs'>已配置测速端{isLoading && <RefreshCw className='size-3 animate-spin' />}</Label>
           {(data?.testers || []).length === 0 ? (
             <p className='text-muted-foreground text-xs'>暂无测速端</p>
@@ -505,12 +586,26 @@ function TestersView({ onBack }: { onBack: () => void }) {
                 <span className='font-medium'>{x.name || `#${x.id}`}</span>
                 <Badge variant={x.online ? 'default' : 'secondary'} className='ml-2 text-[10px]'>{x.online ? '在线' : '离线'}</Badge>
               </div>
-              <Button variant='ghost' size='sm' className='h-6 shrink-0 text-red-600 hover:text-red-700' onClick={() => revokeMut.mutate(x.id)} disabled={revokeMut.isPending}>
-                <Trash2 className='size-3.5' />
-              </Button>
+              <div className='flex items-center gap-1 shrink-0'>
+                {!x.online && (
+                  <Button
+                    variant='ghost'
+                    size='sm'
+                    className='h-6 text-primary hover:text-primary'
+                    onClick={() => rotateMut.mutate({ id: x.id, name: x.name || `tester-${x.id}` })}
+                    disabled={rotateMut.isPending}
+                    title='重新生成令牌并展示安装命令(原令牌立即失效)'
+                  >
+                    <RefreshCw className='size-3.5 mr-1' />重装
+                  </Button>
+                )}
+                <Button variant='ghost' size='sm' className='h-6 text-red-600 hover:text-red-700' onClick={() => revokeMut.mutate(x.id)} disabled={revokeMut.isPending}>
+                  <Trash2 className='size-3.5' />
+                </Button>
+              </div>
             </div>
           ))}
-        </div>
+        </div>}
       </div>
     </>
   )
