@@ -2723,7 +2723,7 @@ function NodesPage() {
           <div>
             <h1 className='text-3xl font-semibold tracking-tight'>节点管理</h1>
             <p className='text-muted-foreground mt-2'>
-              输入代理节点信息，每行一个节点，支持 VMess、VLESS、Trojan、Shadowsocks、Hysteria、Socks、TUIC、AnyTLS、WireGuard 协议。
+              输入代理节点信息，每行一个节点，支持 VMess、VLESS、Trojan、Shadowsocks、Hysteria、Socks、TUIC、AnyTLS、WireGuard、Snell 协议。
             </p>
           </div>
 

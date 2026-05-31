@@ -121,20 +121,19 @@ func main() {
 	syncSubscribeFilesToDatabase(repo, subscribeDir)
 
 	// 初始化通知模块
-	if sysCfg, err := repo.GetSystemConfig(context.Background()); err == nil {
-		handler.InitNotifier(notify.Config{
-			Enabled:              sysCfg.NotifyEnabled,
-			BotToken:             sysCfg.TelegramBotToken,
-			ChatID:               sysCfg.TelegramChatID,
-			NotifySubscribeFetch: sysCfg.NotifySubscribeFetch,
-			NotifyLogin:          sysCfg.NotifyLogin,
-			NotifyIPBan:          sysCfg.NotifyIPBan,
-			NotifySilentMode:     sysCfg.NotifySilentMode,
-			NotifyDailyTraffic:   sysCfg.NotifyDailyTraffic,
-			NotifyExpiry:         sysCfg.NotifyExpiry,
-			DailyTrafficTime:     sysCfg.NotifyDailyTrafficTime,
-		})
-	}
+	sysCfg, _ := repo.GetSystemConfig(context.Background())
+	handler.InitNotifier(notify.Config{
+		Enabled:              sysCfg.NotifyEnabled,
+		BotToken:             sysCfg.TelegramBotToken,
+		ChatID:               sysCfg.TelegramChatID,
+		NotifySubscribeFetch: sysCfg.NotifySubscribeFetch,
+		NotifyLogin:          sysCfg.NotifyLogin,
+		NotifyIPBan:          sysCfg.NotifyIPBan,
+		NotifySilentMode:     sysCfg.NotifySilentMode,
+		NotifyDailyTraffic:   sysCfg.NotifyDailyTraffic,
+		NotifyExpiry:         sysCfg.NotifyExpiry,
+		DailyTrafficTime:     sysCfg.NotifyDailyTrafficTime,
+	})
 
 	// 启动时初始化代理集合缓存
 	go handler.InitProxyProviderCacheOnStartup(repo)
@@ -145,7 +144,7 @@ func main() {
 
 	trafficHandler := handler.NewTrafficSummaryHandler(repo)
 	userRepo := auth.NewRepositoryAdapter(repo)
-	loginRateLimiter := handler.NewLoginRateLimiter()
+	loginRateLimiter := handler.NewLoginRateLimiterWithConfig(sysCfg.LoginRateMaxAttempts, sysCfg.LoginRateWindow, sysCfg.LoginRateLockDuration)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/setup/status", handler.NewSetupStatusHandler(repo))
@@ -255,9 +254,8 @@ func main() {
 	// /t/{id} paths route to temporary subscription handler
 	// All other paths go to the web handler
 	shortLinkHandler := handler.NewShortLinkHandler(repo, subscriptionHandler)
-	bruteForceProtector := handler.NewBruteForceProtector()
-	// 订阅获取频率限制(每 IP 每 2 小时 30 次),覆盖根路径短链接与 /t/ 临时订阅,防枚举/抓取滥用。
-	subRateLimiter := handler.NewSubscriptionRateLimiter(30, 2*time.Hour)
+	bruteForceProtector := handler.NewBruteForceProtectorWithConfig(sysCfg.BruteForceEnabled, sysCfg.BruteForceMaxFailures, sysCfg.BruteForceWindow, sysCfg.BruteForceBlockDuration)
+	subRateLimiter := handler.NewSubscriptionRateLimiter(sysCfg.SubRateLimitMax, time.Duration(sysCfg.SubRateLimitWindow)*time.Minute)
 	go subRateLimiter.StartCleanup(context.Background())
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.Trim(r.URL.Path, "/")

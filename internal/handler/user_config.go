@@ -39,6 +39,17 @@ type userConfigRequest struct {
 	EnableSubTrafficHeader   bool    `json:"enable_sub_traffic_header"`
 	EnableOverrideScripts    bool    `json:"enable_override_scripts"`
 	SubscriptionOutputFormat string  `json:"subscription_output_format"`
+	// 安全配置
+	LoginRateMaxAttempts    int  `json:"login_rate_max_attempts"`
+	LoginRateWindow         int  `json:"login_rate_window"`
+	LoginRateLockDuration   int  `json:"login_rate_lock_duration"`
+	BruteForceEnabled       bool `json:"brute_force_enabled"`
+	BruteForceMaxFailures   int  `json:"brute_force_max_failures"`
+	BruteForceWindow        int  `json:"brute_force_window"`
+	BruteForceBlockDuration int  `json:"brute_force_block_duration"`
+	SubRateLimitEnabled     bool `json:"sub_rate_limit_enabled"`
+	SubRateLimitMax         int  `json:"sub_rate_limit_max"`
+	SubRateLimitWindow      int  `json:"sub_rate_limit_window"`
 }
 
 type userConfigResponse struct {
@@ -66,6 +77,17 @@ type userConfigResponse struct {
 	EnableSubTrafficHeader   bool    `json:"enable_sub_traffic_header"`
 	EnableOverrideScripts    bool    `json:"enable_override_scripts"`
 	SubscriptionOutputFormat string  `json:"subscription_output_format"`
+	// 安全配置
+	LoginRateMaxAttempts    int  `json:"login_rate_max_attempts"`
+	LoginRateWindow         int  `json:"login_rate_window"`
+	LoginRateLockDuration   int  `json:"login_rate_lock_duration"`
+	BruteForceEnabled       bool `json:"brute_force_enabled"`
+	BruteForceMaxFailures   int  `json:"brute_force_max_failures"`
+	BruteForceWindow        int  `json:"brute_force_window"`
+	BruteForceBlockDuration int  `json:"brute_force_block_duration"`
+	SubRateLimitEnabled     bool `json:"sub_rate_limit_enabled"`
+	SubRateLimitMax         int  `json:"sub_rate_limit_max"`
+	SubRateLimitWindow      int  `json:"sub_rate_limit_window"`
 }
 
 func NewUserConfigHandler(repo *storage.TrafficRepository) http.Handler {
@@ -128,6 +150,16 @@ func handleGetUserConfig(w http.ResponseWriter, r *http.Request, repo *storage.T
 				EnableSubTrafficHeader:   systemConfig.EnableSubTrafficHeader,
 				EnableOverrideScripts:    systemConfig.EnableOverrideScripts,
 				SubscriptionOutputFormat: systemConfig.SubscriptionOutputFormat,
+				LoginRateMaxAttempts:     systemConfig.LoginRateMaxAttempts,
+				LoginRateWindow:          systemConfig.LoginRateWindow,
+				LoginRateLockDuration:    systemConfig.LoginRateLockDuration,
+				BruteForceEnabled:        systemConfig.BruteForceEnabled,
+				BruteForceMaxFailures:    systemConfig.BruteForceMaxFailures,
+				BruteForceWindow:         systemConfig.BruteForceWindow,
+				BruteForceBlockDuration:  systemConfig.BruteForceBlockDuration,
+				SubRateLimitEnabled:      systemConfig.SubRateLimitEnabled,
+				SubRateLimitMax:          systemConfig.SubRateLimitMax,
+				SubRateLimitWindow:       systemConfig.SubRateLimitWindow,
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -163,6 +195,16 @@ func handleGetUserConfig(w http.ResponseWriter, r *http.Request, repo *storage.T
 		EnableSubTrafficHeader:   systemConfig.EnableSubTrafficHeader,
 		EnableOverrideScripts:    systemConfig.EnableOverrideScripts,
 		SubscriptionOutputFormat: systemConfig.SubscriptionOutputFormat,
+		LoginRateMaxAttempts:     systemConfig.LoginRateMaxAttempts,
+		LoginRateWindow:          systemConfig.LoginRateWindow,
+		LoginRateLockDuration:    systemConfig.LoginRateLockDuration,
+		BruteForceEnabled:        systemConfig.BruteForceEnabled,
+		BruteForceMaxFailures:    systemConfig.BruteForceMaxFailures,
+		BruteForceWindow:         systemConfig.BruteForceWindow,
+		BruteForceBlockDuration:  systemConfig.BruteForceBlockDuration,
+		SubRateLimitEnabled:      systemConfig.SubRateLimitEnabled,
+		SubRateLimitMax:          systemConfig.SubRateLimitMax,
+		SubRateLimitWindow:       systemConfig.SubRateLimitWindow,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -278,9 +320,31 @@ func handleUpdateUserConfig(w http.ResponseWriter, r *http.Request, repo *storag
 	systemConfig.EnableSubTrafficHeader = payload.EnableSubTrafficHeader
 	systemConfig.EnableOverrideScripts = payload.EnableOverrideScripts
 	systemConfig.SubscriptionOutputFormat = subscriptionOutputFormat
+	// 安全配置
+	systemConfig.LoginRateMaxAttempts = payload.LoginRateMaxAttempts
+	systemConfig.LoginRateWindow = payload.LoginRateWindow
+	systemConfig.LoginRateLockDuration = payload.LoginRateLockDuration
+	systemConfig.BruteForceEnabled = payload.BruteForceEnabled
+	systemConfig.BruteForceMaxFailures = payload.BruteForceMaxFailures
+	systemConfig.BruteForceWindow = payload.BruteForceWindow
+	systemConfig.BruteForceBlockDuration = payload.BruteForceBlockDuration
+	systemConfig.SubRateLimitEnabled = payload.SubRateLimitEnabled
+	systemConfig.SubRateLimitMax = payload.SubRateLimitMax
+	systemConfig.SubRateLimitWindow = payload.SubRateLimitWindow
 	if err := repo.UpdateSystemConfig(r.Context(), systemConfig); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("update system config: %w", err))
 		return
+	}
+
+	// 热更新安全组件配置
+	if rl := GetLoginRateLimiter(); rl != nil {
+		rl.UpdateConfig(systemConfig.LoginRateMaxAttempts, systemConfig.LoginRateWindow, systemConfig.LoginRateLockDuration)
+	}
+	if bfp := GetBruteForceProtector(); bfp != nil {
+		bfp.UpdateConfig(systemConfig.BruteForceEnabled, systemConfig.BruteForceMaxFailures, systemConfig.BruteForceWindow, systemConfig.BruteForceBlockDuration)
+	}
+	if srl := GetSubscriptionRateLimiter(); srl != nil {
+		srl.UpdateConfig(systemConfig.SubRateLimitEnabled, systemConfig.SubRateLimitMax, systemConfig.SubRateLimitWindow)
 	}
 
 	if oldSysCfg.SilentMode != payload.SilentMode {
@@ -322,6 +386,16 @@ func handleUpdateUserConfig(w http.ResponseWriter, r *http.Request, repo *storag
 		EnableSubTrafficHeader:   payload.EnableSubTrafficHeader,
 		EnableOverrideScripts:    payload.EnableOverrideScripts,
 		SubscriptionOutputFormat: subscriptionOutputFormat,
+		LoginRateMaxAttempts:     systemConfig.LoginRateMaxAttempts,
+		LoginRateWindow:          systemConfig.LoginRateWindow,
+		LoginRateLockDuration:    systemConfig.LoginRateLockDuration,
+		BruteForceEnabled:        systemConfig.BruteForceEnabled,
+		BruteForceMaxFailures:    systemConfig.BruteForceMaxFailures,
+		BruteForceWindow:         systemConfig.BruteForceWindow,
+		BruteForceBlockDuration:  systemConfig.BruteForceBlockDuration,
+		SubRateLimitEnabled:      systemConfig.SubRateLimitEnabled,
+		SubRateLimitMax:          systemConfig.SubRateLimitMax,
+		SubRateLimitWindow:       systemConfig.SubRateLimitWindow,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

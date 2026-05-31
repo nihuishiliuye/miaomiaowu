@@ -20,7 +20,9 @@ type bruteForceRecord struct {
 }
 
 type BruteForceProtector struct {
+	mu            sync.RWMutex
 	attempts      sync.Map // IP -> *bruteForceRecord
+	enabled       bool
 	maxFailures   int
 	window        time.Duration
 	blockDuration time.Duration
@@ -28,6 +30,7 @@ type BruteForceProtector struct {
 
 func NewBruteForceProtector() *BruteForceProtector {
 	p := &BruteForceProtector{
+		enabled:       true,
 		maxFailures:   5,
 		window:        24 * time.Hour,
 		blockDuration: 24 * time.Hour,
@@ -36,11 +39,42 @@ func NewBruteForceProtector() *BruteForceProtector {
 	return p
 }
 
+func NewBruteForceProtectorWithConfig(enabled bool, maxFailures, windowMinutes, blockMinutes int) *BruteForceProtector {
+	p := &BruteForceProtector{
+		enabled:       enabled,
+		maxFailures:   maxFailures,
+		window:        time.Duration(windowMinutes) * time.Minute,
+		blockDuration: time.Duration(blockMinutes) * time.Minute,
+	}
+	globalBruteForceProtector = p
+	return p
+}
+
+func (p *BruteForceProtector) UpdateConfig(enabled bool, maxFailures, windowMinutes, blockMinutes int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.enabled = enabled
+	p.maxFailures = maxFailures
+	p.window = time.Duration(windowMinutes) * time.Minute
+	p.blockDuration = time.Duration(blockMinutes) * time.Minute
+}
+
+func (p *BruteForceProtector) getConfig() (bool, int, time.Duration, time.Duration) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.enabled, p.maxFailures, p.window, p.blockDuration
+}
+
 func GetBruteForceProtector() *BruteForceProtector {
 	return globalBruteForceProtector
 }
 
 func (p *BruteForceProtector) IsBlocked(ip, path string) bool {
+	enabled, _, _, _ := p.getConfig()
+	if !enabled {
+		return false
+	}
+
 	val, ok := p.attempts.Load(ip)
 	if !ok {
 		return false
@@ -68,6 +102,11 @@ func (p *BruteForceProtector) IsBlocked(ip, path string) bool {
 }
 
 func (p *BruteForceProtector) RecordFailure(ip, path string) {
+	enabled, maxFailures, window, blockDuration := p.getConfig()
+	if !enabled {
+		return
+	}
+
 	now := time.Now()
 
 	val, loaded := p.attempts.Load(ip)
@@ -75,7 +114,7 @@ func (p *BruteForceProtector) RecordFailure(ip, path string) {
 		logger.Warn("⚠️ [BRUTE_FORCE] 订阅探测失败",
 			"ip", ip,
 			"访问路径", path,
-			"次数", fmt.Sprintf("1/%d", p.maxFailures),
+			"次数", fmt.Sprintf("1/%d", maxFailures),
 		)
 		p.attempts.Store(ip, &bruteForceRecord{
 			count:     1,
@@ -86,17 +125,15 @@ func (p *BruteForceProtector) RecordFailure(ip, path string) {
 
 	rec := val.(*bruteForceRecord)
 
-	// 已被封禁，忽略
 	if !rec.blockUntil.IsZero() && now.Before(rec.blockUntil) {
 		return
 	}
 
-	// 窗口过期，重置
-	if now.Sub(rec.firstTime) > p.window {
+	if now.Sub(rec.firstTime) > window {
 		logger.Warn("⚠️ [BRUTE_FORCE] 订阅探测失败（窗口重置）",
 			"ip", ip,
 			"访问路径", path,
-			"次数", fmt.Sprintf("1/%d", p.maxFailures),
+			"次数", fmt.Sprintf("1/%d", maxFailures),
 		)
 		p.attempts.Store(ip, &bruteForceRecord{
 			count:     1,
@@ -106,8 +143,8 @@ func (p *BruteForceProtector) RecordFailure(ip, path string) {
 	}
 
 	rec.count++
-	if rec.count >= p.maxFailures {
-		rec.blockUntil = now.Add(p.blockDuration)
+	if rec.count >= maxFailures {
+		rec.blockUntil = now.Add(blockDuration)
 		logger.Warn("🚫🚫🚫 [BRUTE_FORCE] IP 已被封禁！",
 			"ip", ip,
 			"触发路径", path,

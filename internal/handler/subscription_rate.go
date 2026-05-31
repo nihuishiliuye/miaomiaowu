@@ -8,18 +8,23 @@ import (
 	"miaomiaowu/internal/logger"
 )
 
-// SubscriptionRateLimiter 对"获取订阅"类请求(根路径短链接、/t/ 临时订阅等)做每 IP 频率限制,
-// 防止枚举/抓取滥用。固定窗口计数。
+var globalSubscriptionRateLimiter *SubscriptionRateLimiter
+
+func GetSubscriptionRateLimiter() *SubscriptionRateLimiter {
+	return globalSubscriptionRateLimiter
+}
+
 type subRateRecord struct {
 	count       int
 	windowStart time.Time
 }
 
 type SubscriptionRateLimiter struct {
-	mu     sync.Mutex
-	ips    map[string]*subRateRecord
-	limit  int
-	window time.Duration
+	mu      sync.Mutex
+	ips     map[string]*subRateRecord
+	enabled bool
+	limit   int
+	window  time.Duration
 }
 
 func NewSubscriptionRateLimiter(limit int, window time.Duration) *SubscriptionRateLimiter {
@@ -29,10 +34,25 @@ func NewSubscriptionRateLimiter(limit int, window time.Duration) *SubscriptionRa
 	if window <= 0 {
 		window = time.Minute
 	}
-	return &SubscriptionRateLimiter{
-		ips:    make(map[string]*subRateRecord),
-		limit:  limit,
-		window: window,
+	l := &SubscriptionRateLimiter{
+		ips:     make(map[string]*subRateRecord),
+		enabled: true,
+		limit:   limit,
+		window:  window,
+	}
+	globalSubscriptionRateLimiter = l
+	return l
+}
+
+func (l *SubscriptionRateLimiter) UpdateConfig(enabled bool, limit, windowMinutes int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.enabled = enabled
+	if limit > 0 {
+		l.limit = limit
+	}
+	if windowMinutes > 0 {
+		l.window = time.Duration(windowMinutes) * time.Minute
 	}
 }
 
@@ -44,6 +64,10 @@ func (l *SubscriptionRateLimiter) Allow(ip string) bool {
 	now := time.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	if !l.enabled {
+		return true
+	}
 
 	rec, ok := l.ips[ip]
 	if !ok || now.Sub(rec.windowStart) > l.window {

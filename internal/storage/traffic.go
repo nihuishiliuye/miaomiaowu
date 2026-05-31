@@ -293,6 +293,18 @@ type SystemConfig struct {
 	NotifyDailyTraffic     bool
 	NotifyExpiry           bool
 	NotifyDailyTrafficTime string // "HH:MM" default "08:00"
+
+	// 安全配置
+	LoginRateMaxAttempts    int  `json:"login_rate_max_attempts"`
+	LoginRateWindow         int  `json:"login_rate_window"`
+	LoginRateLockDuration   int  `json:"login_rate_lock_duration"`
+	BruteForceEnabled       bool `json:"brute_force_enabled"`
+	BruteForceMaxFailures   int  `json:"brute_force_max_failures"`
+	BruteForceWindow        int  `json:"brute_force_window"`
+	BruteForceBlockDuration int  `json:"brute_force_block_duration"`
+	SubRateLimitEnabled     bool `json:"sub_rate_limit_enabled"`
+	SubRateLimitMax         int  `json:"sub_rate_limit_max"`
+	SubRateLimitWindow      int  `json:"sub_rate_limit_window"`
 }
 
 // ExternalSubscription represents an external subscription URL imported by user.
@@ -1019,6 +1031,24 @@ WHERE NOT EXISTS (SELECT 1 FROM system_config WHERE id = 1);
 	}
 	if err := r.ensureSystemConfigColumn("enable_two_factor", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
+	}
+
+	// 安全配置
+	for _, col := range [][2]string{
+		{"login_rate_max_attempts", "INTEGER NOT NULL DEFAULT 5"},
+		{"login_rate_window", "INTEGER NOT NULL DEFAULT 60"},
+		{"login_rate_lock_duration", "INTEGER NOT NULL DEFAULT 60"},
+		{"brute_force_enabled", "INTEGER NOT NULL DEFAULT 1"},
+		{"brute_force_max_failures", "INTEGER NOT NULL DEFAULT 5"},
+		{"brute_force_window", "INTEGER NOT NULL DEFAULT 1440"},
+		{"brute_force_block_duration", "INTEGER NOT NULL DEFAULT 1440"},
+		{"sub_rate_limit_enabled", "INTEGER NOT NULL DEFAULT 1"},
+		{"sub_rate_limit_max", "INTEGER NOT NULL DEFAULT 30"},
+		{"sub_rate_limit_window", "INTEGER NOT NULL DEFAULT 120"},
+	} {
+		if err := r.ensureSystemConfigColumn(col[0], col[1]); err != nil {
+			return err
+		}
 	}
 
 	const customRulesSchema = `
@@ -4717,7 +4747,10 @@ SELECT proxy_groups_source_url, client_compatibility_mode, silent_mode, silent_m
        COALESCE(notify_enabled, 0), COALESCE(telegram_bot_token, ''), COALESCE(telegram_chat_id, ''),
        COALESCE(notify_subscribe_fetch, 1), COALESCE(notify_login, 1), COALESCE(notify_ip_ban, 1),
        COALESCE(notify_silent_mode, 1), COALESCE(notify_daily_traffic, 0), COALESCE(notify_expiry, 1),
-       COALESCE(notify_daily_traffic_time, '08:00')
+       COALESCE(notify_daily_traffic_time, '08:00'),
+       COALESCE(login_rate_max_attempts, 5), COALESCE(login_rate_window, 60), COALESCE(login_rate_lock_duration, 60),
+       COALESCE(brute_force_enabled, 1), COALESCE(brute_force_max_failures, 5), COALESCE(brute_force_window, 1440), COALESCE(brute_force_block_duration, 1440),
+       COALESCE(sub_rate_limit_enabled, 1), COALESCE(sub_rate_limit_max, 30), COALESCE(sub_rate_limit_window, 120)
 FROM system_config
 WHERE id = 1
 `
@@ -4727,6 +4760,7 @@ WHERE id = 1
 	var enableShortLinkInt, enableSubTrafficHeaderInt, enableOverrideScriptsInt int
 	var notifyEnabledInt, notifySubFetchInt, notifyLoginInt, notifyIPBanInt int
 	var notifySilentModeInt, notifyDailyTrafficInt, notifyExpiryInt int
+	var bruteForceEnabledInt, subRateLimitEnabledInt int
 	err := r.db.QueryRowContext(ctx, query).Scan(
 		&cfg.ProxyGroupsSourceURL, &compatibilityMode, &silentMode, &silentModeTimeout,
 		&enableSubInfoNodes, &cfg.SubInfoExpirePrefix, &cfg.SubInfoTrafficPrefix,
@@ -4736,6 +4770,9 @@ WHERE id = 1
 		&notifySubFetchInt, &notifyLoginInt, &notifyIPBanInt,
 		&notifySilentModeInt, &notifyDailyTrafficInt, &notifyExpiryInt,
 		&cfg.NotifyDailyTrafficTime,
+		&cfg.LoginRateMaxAttempts, &cfg.LoginRateWindow, &cfg.LoginRateLockDuration,
+		&bruteForceEnabledInt, &cfg.BruteForceMaxFailures, &cfg.BruteForceWindow, &cfg.BruteForceBlockDuration,
+		&subRateLimitEnabledInt, &cfg.SubRateLimitMax, &cfg.SubRateLimitWindow,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -4747,6 +4784,16 @@ WHERE id = 1
 				EnableSubTrafficHeader:   true,
 				SubscriptionOutputFormat: "yaml",
 				NotifyDailyTrafficTime:   "08:00",
+				LoginRateMaxAttempts:     5,
+				LoginRateWindow:          60,
+				LoginRateLockDuration:    60,
+				BruteForceEnabled:        true,
+				BruteForceMaxFailures:    5,
+				BruteForceWindow:         1440,
+				BruteForceBlockDuration:  1440,
+				SubRateLimitEnabled:      true,
+				SubRateLimitMax:          30,
+				SubRateLimitWindow:       120,
 			}, nil
 		}
 		return SystemConfig{}, fmt.Errorf("query system config: %w", err)
@@ -4781,6 +4828,32 @@ WHERE id = 1
 	if cfg.SubscriptionOutputFormat == "" {
 		cfg.SubscriptionOutputFormat = "yaml"
 	}
+	cfg.BruteForceEnabled = bruteForceEnabledInt != 0
+	cfg.SubRateLimitEnabled = subRateLimitEnabledInt != 0
+	if cfg.LoginRateMaxAttempts <= 0 {
+		cfg.LoginRateMaxAttempts = 5
+	}
+	if cfg.LoginRateWindow <= 0 {
+		cfg.LoginRateWindow = 60
+	}
+	if cfg.LoginRateLockDuration <= 0 {
+		cfg.LoginRateLockDuration = 60
+	}
+	if cfg.BruteForceMaxFailures <= 0 {
+		cfg.BruteForceMaxFailures = 5
+	}
+	if cfg.BruteForceWindow <= 0 {
+		cfg.BruteForceWindow = 1440
+	}
+	if cfg.BruteForceBlockDuration <= 0 {
+		cfg.BruteForceBlockDuration = 1440
+	}
+	if cfg.SubRateLimitMax <= 0 {
+		cfg.SubRateLimitMax = 30
+	}
+	if cfg.SubRateLimitWindow <= 0 {
+		cfg.SubRateLimitWindow = 120
+	}
 	return cfg, nil
 }
 
@@ -4810,6 +4883,16 @@ SET proxy_groups_source_url = ?,
     notify_daily_traffic = ?,
     notify_expiry = ?,
     notify_daily_traffic_time = ?,
+    login_rate_max_attempts = ?,
+    login_rate_window = ?,
+    login_rate_lock_duration = ?,
+    brute_force_enabled = ?,
+    brute_force_max_failures = ?,
+    brute_force_window = ?,
+    brute_force_block_duration = ?,
+    sub_rate_limit_enabled = ?,
+    sub_rate_limit_max = ?,
+    sub_rate_limit_window = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = 1
 `
@@ -4852,6 +4935,9 @@ WHERE id = 1
 		boolToInt(cfg.NotifySubscribeFetch), boolToInt(cfg.NotifyLogin), boolToInt(cfg.NotifyIPBan),
 		boolToInt(cfg.NotifySilentMode), boolToInt(cfg.NotifyDailyTraffic), boolToInt(cfg.NotifyExpiry),
 		dailyTrafficTime,
+		cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateLockDuration,
+		boolToInt(cfg.BruteForceEnabled), cfg.BruteForceMaxFailures, cfg.BruteForceWindow, cfg.BruteForceBlockDuration,
+		boolToInt(cfg.SubRateLimitEnabled), cfg.SubRateLimitMax, cfg.SubRateLimitWindow,
 	)
 	if err != nil {
 		return fmt.Errorf("update system config: %w", err)
