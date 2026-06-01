@@ -725,6 +725,8 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		ext = ".yaml"
 	}
 
+	data = deduplicateProxies(data, username)
+
 	// clash/classmeta/clash-to-shadowrocket 直接输出 Clash YAML, 不需要转换
 	if clientType != "" && clientType != "clash" && clientType != "clashmeta" && clientType != "clash-to-shadowrocket" {
 		convertedData, err := h.convertSubscription(r.Context(), data, clientType)
@@ -2524,4 +2526,101 @@ func jsonWriteScalar(buf *bytes.Buffer, node *yaml.Node) {
 func jsonEncodeString(buf *bytes.Buffer, s string) {
 	b, _ := json.Marshal(s)
 	buf.Write(b)
+}
+
+// deduplicateProxies 对 Clash YAML 做兜底去重：
+// 1. proxies 列表中同名节点只保留第一个
+// 2. proxy-groups 中每个 group 的 proxies 列表去重
+func deduplicateProxies(data []byte, username string) []byte {
+	var config map[string]interface{}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return data
+	}
+
+	changed := false
+
+	// 去重 proxies
+	if proxiesRaw, ok := config["proxies"]; ok {
+		if proxies, ok := proxiesRaw.([]interface{}); ok {
+			seen := make(map[string]bool)
+			deduped := make([]interface{}, 0, len(proxies))
+			for _, p := range proxies {
+				pm, ok := p.(map[string]interface{})
+				if !ok {
+					deduped = append(deduped, p)
+					continue
+				}
+				name, _ := pm["name"].(string)
+				if name == "" {
+					deduped = append(deduped, p)
+					continue
+				}
+				if seen[name] {
+					logger.Warn("[DEDUP] 移除重复节点",
+						"user", username,
+						"node", name,
+					)
+					changed = true
+					continue
+				}
+				seen[name] = true
+				deduped = append(deduped, p)
+			}
+			if changed {
+				config["proxies"] = deduped
+			}
+		}
+	}
+
+	// 去重 proxy-groups 中每个 group 的 proxies
+	if groupsRaw, ok := config["proxy-groups"]; ok {
+		if groups, ok := groupsRaw.([]interface{}); ok {
+			for _, g := range groups {
+				gm, ok := g.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				groupName, _ := gm["name"].(string)
+				proxiesRaw, ok := gm["proxies"]
+				if !ok {
+					continue
+				}
+				proxies, ok := proxiesRaw.([]interface{})
+				if !ok {
+					continue
+				}
+				seen := make(map[string]bool)
+				deduped := make([]interface{}, 0, len(proxies))
+				for _, p := range proxies {
+					name, _ := p.(string)
+					if name == "" {
+						deduped = append(deduped, p)
+						continue
+					}
+					if seen[name] {
+						logger.Warn("[DEDUP] 移除 proxy-group 中重复引用",
+							"user", username,
+							"group", groupName,
+							"node", name,
+						)
+						changed = true
+						continue
+					}
+					seen[name] = true
+					deduped = append(deduped, p)
+				}
+				gm["proxies"] = deduped
+			}
+		}
+	}
+
+	if !changed {
+		return data
+	}
+
+	out, err := yaml.Marshal(config)
+	if err != nil {
+		return data
+	}
+	return out
 }
