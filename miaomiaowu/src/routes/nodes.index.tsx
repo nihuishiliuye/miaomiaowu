@@ -25,7 +25,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { parseProxyUrl, toClashProxy, type ProxyNode, type ClashProxy } from '@/lib/proxy-parser'
+import { parseProxyUrl, parseSurgeLine, toClashProxy, type ProxyNode, type ClashProxy } from '@/lib/proxy-parser'
 import { load as parseYAML, dump as dumpYAML } from 'js-yaml'
 import { Check, Pencil, X, Undo2, Activity, Eye, Copy, ChevronDown, Link2, Flag, GripVertical, Zap, Loader2, Expand, List, ArrowUpToLine, ArrowDownToLine, ArrowUp, ArrowDown, ArrowUpDown, Gauge } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -2215,13 +2215,22 @@ function NodesPage() {
       return
     }
 
-    // v2ray 格式
+    // v2ray 格式 / Surge INI 格式
     const lines = input.split('\n').filter(line => line.trim())
     for (const line of lines) {
       const trimmed = line.trim()
-      if (!trimmed || !trimmed.includes('://')) continue
-      const parsedNode = parseProxyUrl(trimmed)
-      const clashNode = parsedNode ? toClashProxy(parsedNode) : null
+      if (!trimmed) continue
+      if (trimmed.startsWith('#') || trimmed.startsWith(';') || trimmed.startsWith('[')) continue
+      // 1. URI;2. Surge INI(`节点名 = type, server, port, ...`)
+      let parsedNode: ProxyNode | null = null
+      if (trimmed.includes('://')) {
+        parsedNode = parseProxyUrl(trimmed)
+      }
+      if (!parsedNode && trimmed.includes('=')) {
+        parsedNode = parseSurgeLine(trimmed)
+      }
+      if (!parsedNode) continue
+      const clashNode = toClashProxy(parsedNode)
       if (skipCertVerify && clashNode) clashNode['skip-cert-verify'] = true
       const name = parsedNode?.name || clashNode?.name || '未知'
       const normalizedParsed = cloneProxyWithName(parsedNode, name)

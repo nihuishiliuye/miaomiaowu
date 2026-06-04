@@ -236,7 +236,8 @@ type SubscribeFile struct {
 	SelectedCustomRuleIDs    []int64 // 选中的自定义规则 ID，为空且开启覆写时表示应用全部已启用规则
 	SelectedOverrideScriptIDs []int64 // 选中的覆写脚本 ID，为空且开启覆写时表示应用全部已启用脚本
 	TemplateFilename         string  // 绑定的 V3 模板文件名，为空表示未绑定模板
-	SelectedTags             []string // 选中的节点标签，为空表示使用所有节点
+	SelectedTags             []string // 选中的节点标签，为空表示使用所有节点(legacy,与 SelectedNodeIDs 二选一)
+	SelectedNodeIDs          []int64  // 选中的节点 ID,非空时优先于 SelectedTags 过滤
 	RawOutput           bool       // 非Clash配置，直接输出原始内容
 	SortOrder           int        // 排序权重，值越小越靠前
 	TrafficLimit        *float64   // 手动设置的总流量上限(GB)，nil表示跟随探针
@@ -1090,6 +1091,10 @@ CREATE INDEX IF NOT EXISTS idx_custom_rules_enabled ON custom_rules(enabled);
 
 	// 添加 selected_tags 字段，用于存储选中的节点标签（JSON 数组）
 	if err := r.ensureSubscribeFileColumn("selected_tags", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return err
+	}
+	// 节点选择(取代 selected_tags 的精确粒度;非空 → 按 ID 过滤;空 → 回退 selected_tags 兼容老数据)
+	if err := r.ensureSubscribeFileColumn("selected_node_ids", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return err
 	}
 

@@ -1006,6 +1006,51 @@ func parseHexString(s string) (int64, bool) {
 	return result, true
 }
 
+// CollectUsedProxyNamesFromGroups 扫顶层 proxy-groups 收集真正被引用的"叶子节点名"(非组名、非内置词)。
+// 与 (*TemplateV3Processor).collectUsedProxyNames 算法等价但不依赖 processor 实例 —
+// 供订阅生成后处理裁掉顶层 proxies 里没被任何代理组引用的孤儿节点用。
+func CollectUsedProxyNamesFromGroups(groupsNode *yaml.Node) map[string]bool {
+	used := make(map[string]bool)
+	if groupsNode == nil || groupsNode.Kind != yaml.SequenceNode {
+		return used
+	}
+	groupNames := make(map[string]bool)
+	for _, g := range groupsNode.Content {
+		if g.Kind != yaml.MappingNode {
+			continue
+		}
+		for i := 0; i < len(g.Content)-1; i += 2 {
+			if g.Content[i].Value == "name" {
+				groupNames[g.Content[i+1].Value] = true
+				break
+			}
+		}
+	}
+	for _, g := range groupsNode.Content {
+		if g.Kind != yaml.MappingNode {
+			continue
+		}
+		for i := 0; i < len(g.Content)-1; i += 2 {
+			if g.Content[i].Value != "proxies" {
+				continue
+			}
+			pn := g.Content[i+1]
+			if pn.Kind != yaml.SequenceNode {
+				continue
+			}
+			for _, item := range pn.Content {
+				name := item.Value
+				if name == "" || groupNames[name] || name == "DIRECT" || name == "REJECT" || name == "PASS" {
+					continue
+				}
+				used[name] = true
+			}
+			break
+		}
+	}
+	return used
+}
+
 // collectUsedProxyNames collects all proxy names used in processed proxy-groups
 func (p *TemplateV3Processor) collectUsedProxyNames(groupsNode *yaml.Node) map[string]bool {
 	usedNames := make(map[string]bool)

@@ -481,9 +481,14 @@ func (h *subscribeFilesHandler) handleUpdate(w http.ResponseWriter, r *http.Requ
 			templateJustBound = true
 		}
 	}
-	// 更新选中的节点标签
+	// 更新选中的节点标签(legacy)
 	if req.SelectedTags != nil {
 		existing.SelectedTags = req.SelectedTags
+		tagsChanged = true
+	}
+	// 更新选中的节点 ID(新模式,精确)。非空时优先于 SelectedTags
+	if req.SelectedNodeIDs != nil {
+		existing.SelectedNodeIDs = req.SelectedNodeIDs
 		tagsChanged = true
 	}
 	// 更新自定义短链接码
@@ -675,6 +680,7 @@ type subscribeFileRequest struct {
 	SelectedOverrideScriptIDs []int64  `json:"selected_override_script_ids,omitempty"`
 	TemplateFilename          *string  `json:"template_filename,omitempty"`
 	SelectedTags              []string `json:"selected_tags,omitempty"`
+	SelectedNodeIDs           []int64  `json:"selected_node_ids,omitempty"`
 	CustomShortCode           *string  `json:"custom_short_code,omitempty"` // 自定义短链接码
 	ExpireAt                  *string  `json:"expire_at,omitempty"`
 	RawOutput                 *bool    `json:"raw_output,omitempty"` // 非Clash配置，直接输出原始内容
@@ -694,6 +700,7 @@ type subscribeFileDTO struct {
 	SelectedOverrideScriptIDs []int64    `json:"selected_override_script_ids"`
 	TemplateFilename          string     `json:"template_filename"`
 	SelectedTags              []string   `json:"selected_tags"`
+	SelectedNodeIDs           []int64    `json:"selected_node_ids"`
 	CustomShortCode           string     `json:"custom_short_code"`
 	RawOutput                 bool       `json:"raw_output"`
 	TrafficLimit              *float64   `json:"traffic_limit"`
@@ -707,6 +714,10 @@ func convertSubscribeFile(file storage.SubscribeFile) subscribeFileDTO {
 	selectedTags := file.SelectedTags
 	if selectedTags == nil {
 		selectedTags = []string{}
+	}
+	selectedNodeIDs := file.SelectedNodeIDs
+	if selectedNodeIDs == nil {
+		selectedNodeIDs = []int64{}
 	}
 	ruleIDs := file.SelectedCustomRuleIDs
 	if ruleIDs == nil {
@@ -728,6 +739,7 @@ func convertSubscribeFile(file storage.SubscribeFile) subscribeFileDTO {
 		SelectedOverrideScriptIDs: scriptIDs,
 		TemplateFilename:          file.TemplateFilename,
 		SelectedTags:              selectedTags,
+		SelectedNodeIDs:           selectedNodeIDs,
 		CustomShortCode:           file.CustomShortCode,
 		RawOutput:                 file.RawOutput,
 		TrafficLimit:              file.TrafficLimit,
@@ -788,7 +800,8 @@ func (h *subscribeFilesHandler) handleCreateFromConfig(w http.ResponseWriter, r 
 		Filename         string   `json:"filename"`
 		Content          string   `json:"content"`
 		TemplateFilename string   `json:"template_filename"` // V3 模板文件名
-		SelectedTags     []string `json:"selected_tags"`     // V3 模式下选择的标签
+		SelectedTags     []string `json:"selected_tags"`     // V3 legacy:按标签选节点
+		SelectedNodeIDs  []int64  `json:"selected_node_ids"` // V3 新:按节点 ID 精确选;非空优先于 SelectedTags
 		TrafficLimit     *float64 `json:"traffic_limit"`
 		StatsServerIDs   string   `json:"stats_server_ids"`
 	}
@@ -933,6 +946,7 @@ func (h *subscribeFilesHandler) handleCreateFromConfig(w http.ResponseWriter, r 
 		Filename:         filename,
 		TemplateFilename: req.TemplateFilename,
 		SelectedTags:     req.SelectedTags,
+		SelectedNodeIDs:  req.SelectedNodeIDs,
 		TrafficLimit:     req.TrafficLimit,
 		StatsServerIDs:   req.StatsServerIDs,
 	}
@@ -1385,15 +1399,23 @@ func (h *subscribeFilesHandler) regenerateFromTemplate(ctx context.Context, user
 		return fmt.Errorf("获取节点列表失败: %w", err)
 	}
 
-	// 构建选中标签的 map 用于快速查找
+	// 优先按节点 ID 过滤(新模式);为空回退按标签过滤(legacy 兼容)
+	selectedNodeIDsMap := make(map[int64]bool, len(subscribeFile.SelectedNodeIDs))
+	for _, id := range subscribeFile.SelectedNodeIDs {
+		selectedNodeIDsMap[id] = true
+	}
+	hasNodeFilter := len(selectedNodeIDsMap) > 0
+
 	selectedTagsMap := make(map[string]bool)
 	for _, tag := range subscribeFile.SelectedTags {
 		selectedTagsMap[tag] = true
 	}
-	hasTagFilter := len(selectedTagsMap) > 0
+	hasTagFilter := !hasNodeFilter && len(selectedTagsMap) > 0
 
-	if hasTagFilter {
-		logger.Info("[模板生成] 启用标签过滤", "selected_tags", subscribeFile.SelectedTags, "tag_count", len(subscribeFile.SelectedTags))
+	if hasNodeFilter {
+		logger.Info("[模板生成] 启用节点过滤", "selected_node_ids", subscribeFile.SelectedNodeIDs, "count", len(subscribeFile.SelectedNodeIDs))
+	} else if hasTagFilter {
+		logger.Info("[模板生成] 启用标签过滤(legacy)", "selected_tags", subscribeFile.SelectedTags, "tag_count", len(subscribeFile.SelectedTags))
 	}
 
 	// 构建节点 ID -> 名称映射（用于链式代理解析）
@@ -1411,7 +1433,12 @@ func (h *subscribeFilesHandler) regenerateFromTemplate(ctx context.Context, user
 			continue // 跳过禁用的节点
 		}
 		enabledCount++
-		// 如果设置了标签过滤，只使用选中标签的节点
+		// 节点 ID 精确过滤优先(新模式)
+		if hasNodeFilter && !selectedNodeIDsMap[node.ID] {
+			filteredByTagCount++
+			continue
+		}
+		// 如果设置了标签过滤，只使用选中标签的节点(legacy fallback)
 		if hasTagFilter && !node.HasAnyTag(selectedTagsMap) {
 			filteredByTagCount++
 			continue
@@ -1472,6 +1499,13 @@ func (h *subscribeFilesHandler) regenerateFromTemplate(ctx context.Context, user
 	result, err = injectProxiesIntoTemplate(result, proxies)
 	if err != nil {
 		return fmt.Errorf("注入代理节点失败: %w", err)
+	}
+
+	// 5.5 孤儿节点裁剪:顶层 proxies: 只保留被 proxy-groups 实际引用的节点
+	if pruned, perr := pruneUnreferencedProxiesYAML([]byte(result)); perr == nil {
+		result = string(pruned)
+	} else {
+		logger.Info("[模板生成] 孤儿裁剪跳过", "error", perr.Error())
 	}
 
 	// 6. 写入订阅文件
@@ -1564,4 +1598,66 @@ func (h *subscribeFilesHandler) handleGetSubscriptionUsers(w http.ResponseWriter
 	}
 
 	respondJSON(w, http.StatusOK, map[string]any{"users": users})
+}
+
+// pruneUnreferencedProxiesYAML 顶层 proxies: 数组里删掉没被任何 proxy-group 引用的孤儿节点。
+// 复用 substore.CollectUsedProxyNamesFromGroups 拿 used 集合。
+// 解析/重排失败时返回原数据 + error,调用方决定 fallback(通常 logger.Info 即可不阻塞)。
+func pruneUnreferencedProxiesYAML(data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return data, nil
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return data, err
+	}
+	if len(root.Content) == 0 || root.Content[0].Kind != yaml.MappingNode {
+		return data, nil
+	}
+	doc := root.Content[0]
+	var proxiesNode, groupsNode *yaml.Node
+	for i := 0; i < len(doc.Content)-1; i += 2 {
+		switch doc.Content[i].Value {
+		case "proxies":
+			proxiesNode = doc.Content[i+1]
+		case "proxy-groups":
+			groupsNode = doc.Content[i+1]
+		}
+	}
+	if groupsNode == nil || proxiesNode == nil || proxiesNode.Kind != yaml.SequenceNode {
+		return data, nil
+	}
+	used := substore.CollectUsedProxyNamesFromGroups(groupsNode)
+	if len(used) == 0 {
+		return data, nil
+	}
+	kept := make([]*yaml.Node, 0, len(proxiesNode.Content))
+	removed := 0
+	for _, item := range proxiesNode.Content {
+		if item.Kind != yaml.MappingNode {
+			kept = append(kept, item)
+			continue
+		}
+		var name string
+		for j := 0; j < len(item.Content)-1; j += 2 {
+			if item.Content[j].Value == "name" {
+				name = item.Content[j+1].Value
+				break
+			}
+		}
+		if name == "" || used[name] {
+			kept = append(kept, item)
+		} else {
+			removed++
+		}
+	}
+	if removed == 0 {
+		return data, nil
+	}
+	proxiesNode.Content = kept
+	out, err := MarshalYAMLWithIndent(&root)
+	if err != nil {
+		return data, err
+	}
+	return []byte(RemoveUnicodeEscapeQuotes(string(out))), nil
 }

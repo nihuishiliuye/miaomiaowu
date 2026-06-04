@@ -434,6 +434,12 @@ const SortableCard = memo(function SortableCard({
             <CardDescription className='text-xs'>
               {group.type} ({(group.proxies || []).length} 个节点{(group.use || []).length > 0 ? `, ${(group.use || []).length} 个集合` : ''})
             </CardDescription>
+            {/* 中转代理组标识:订阅生成时给该组节点注入 dialer-proxy */}
+            {group.dialerProxyGroup && (
+              <p className='text-xs text-muted-foreground mt-0.5 truncate' title={`中转: ${group.dialerProxyGroup}`}>
+                中转: {group.dialerProxyGroup}
+              </p>
+            )}
           </div>
           {!isEditing && (
             <div className='flex items-center gap-1'>
