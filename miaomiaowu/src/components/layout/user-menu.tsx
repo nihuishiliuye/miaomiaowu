@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { LogOut, Settings2, ExternalLink, BookOpen, HardDrive, RefreshCw, Bug, Palette } from 'lucide-react'
+import { LogOut, Settings2, ExternalLink, BookOpen, HardDrive, RefreshCw, Bug, Palette, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import useDialogState from '@/hooks/use-dialog-state'
 import { SignOutDialog } from '@/components/sign-out-dialog'
 import { BackupDialog } from '@/components/backup-dialog'
 import { UpdateDialog } from '@/components/update-dialog'
+import { MmwxDialog } from '@/components/mmwx-dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,6 +29,7 @@ export function UserMenu() {
   const [open, setOpen] = useDialogState<boolean>()
   const [backupDialogOpen, setBackupDialogOpen] = useState(false)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
+  const [mmwxDialogOpen, setMmwxDialogOpen] = useState(false)
 
   const { auth } = useAuthStore()
   const { currentVersion, hasUpdate, releaseUrl } = useVersionCheck()
@@ -242,6 +244,9 @@ export function UserMenu() {
               版本 v{currentVersion}
             </a>
           </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setMmwxDialogOpen(true)} className='cursor-pointer justify-center'>
+            <Sparkles className='size-4' /> 妙妙屋X
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setOpen(true)} className='cursor-pointer justify-center'>
             <LogOut className='size-4' /> 退出登录
@@ -252,6 +257,7 @@ export function UserMenu() {
       <SignOutDialog open={Boolean(open)} onOpenChange={(value) => setOpen(value)} />
       <BackupDialog open={backupDialogOpen} onOpenChange={setBackupDialogOpen} />
       <UpdateDialog open={updateDialogOpen} onOpenChange={setUpdateDialogOpen} />
+      <MmwxDialog open={mmwxDialogOpen} onOpenChange={setMmwxDialogOpen} />
     </>
   )
 }
