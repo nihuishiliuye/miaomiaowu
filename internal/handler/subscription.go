@@ -2030,9 +2030,12 @@ func injectRelayGroups(ctx context.Context, repo *storage.TrafficRepository, use
 		groupName  string
 		proxies    []string
 	}
-	var relays []relayInfo
+	relayMap := make(map[string]*relayInfo)
 	for _, n := range nodes {
 		if len(n.RelayGroupNodeIDs) == 0 || n.RelayGroupName == "" {
+			continue
+		}
+		if _, exists := relayMap[n.RelayGroupName]; exists {
 			continue
 		}
 		var proxies []string
@@ -2042,11 +2045,15 @@ func injectRelayGroups(ctx context.Context, repo *storage.TrafficRepository, use
 			}
 		}
 		if len(proxies) > 0 {
-			relays = append(relays, relayInfo{sourceName: n.NodeName, groupName: n.RelayGroupName, proxies: proxies})
+			relayMap[n.RelayGroupName] = &relayInfo{groupName: n.RelayGroupName, proxies: proxies}
 		}
 	}
-	if len(relays) == 0 {
+	if len(relayMap) == 0 {
 		return
+	}
+	var relays []relayInfo
+	for _, r := range relayMap {
+		relays = append(relays, *r)
 	}
 
 	// 给源节点注入 dialer-proxy
@@ -2058,9 +2065,11 @@ func injectRelayGroups(ctx context.Context, repo *storage.TrafficRepository, use
 		if proxiesNode.Kind != yaml.SequenceNode {
 			break
 		}
-		relayBySource := make(map[string]string, len(relays))
-		for _, r := range relays {
-			relayBySource[r.sourceName] = r.groupName
+		relayBySource := make(map[string]string)
+		for _, n := range nodes {
+			if n.RelayGroupName != "" && len(n.RelayGroupNodeIDs) > 0 {
+				relayBySource[n.NodeName] = n.RelayGroupName
+			}
 		}
 		for _, proxyNode := range proxiesNode.Content {
 			if proxyNode.Kind != yaml.MappingNode {
@@ -2361,13 +2370,16 @@ func (h *SubscriptionHandler) generateFromTemplate(ctx context.Context, username
 		proxies = append(proxies, proxyConfig)
 	}
 
-	// 中转组：为每个有中转组的节点生成代理组配置
-	var relayGroups []map[string]any
+	// 中转组：按组名去重，同名组只生成一个 proxy-group
+	relayGroupMap := make(map[string]map[string]any)
 	for _, node := range nodes {
 		if !node.Enabled || len(node.RelayGroupNodeIDs) == 0 || node.RelayGroupName == "" {
 			continue
 		}
 		if hasTagFilter && !node.HasAnyTag(selectedTagsMap) {
+			continue
+		}
+		if _, exists := relayGroupMap[node.RelayGroupName]; exists {
 			continue
 		}
 		var groupProxies []string
@@ -2377,15 +2389,19 @@ func (h *SubscriptionHandler) generateFromTemplate(ctx context.Context, username
 			}
 		}
 		if len(groupProxies) > 0 {
-			relayGroups = append(relayGroups, map[string]any{
+			relayGroupMap[node.RelayGroupName] = map[string]any{
 				"name":      node.RelayGroupName,
 				"type":      "url-test",
 				"proxies":   groupProxies,
 				"url":       "http://www.gstatic.com/generate_204",
 				"interval":  300,
 				"tolerance": 50,
-			})
+			}
 		}
+	}
+	var relayGroups []map[string]any
+	for _, rg := range relayGroupMap {
+		relayGroups = append(relayGroups, rg)
 	}
 
 	logger.Info("[模板生成] 从节点表获取代理节点", "total", len(nodes), "enabled", len(proxies), "tag_filter", hasTagFilter, "relay_groups", len(relayGroups))

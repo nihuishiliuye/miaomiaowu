@@ -1978,6 +1978,24 @@ function NodesPage() {
     },
   })
 
+  // 解除中转组
+  const unbindRelayGroupMutation = useMutation({
+    mutationFn: async (nodeId: number) => {
+      const response = await api.put(`/api/admin/nodes/${nodeId}`, {
+        relay_group_name: '',
+        relay_group_node_ids: [],
+      })
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['nodes'] })
+      toast.success('已解除中转组')
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || '解除中转组失败')
+    },
+  })
+
   // 从订阅获取节点
   const fetchSubscriptionMutation = useMutation({
     mutationFn: async ({ url, userAgent, skipCertVerify }: { url: string; userAgent: string; skipCertVerify: boolean }) => {
@@ -3615,7 +3633,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                       const tip = relayName && node.dbNode?.relay_group_node_ids
                                         ? node.dbNode.relay_group_node_ids.map(id => nodeIdToName.get(id)).filter(Boolean).join('\n')
                                         : chainName ?? ''
-                                      return <div className='text-[10px] text-muted-foreground truncate leading-tight cursor-default' title={tip}>⬐ {label}{relayName ? ` (${node.dbNode?.relay_group_node_ids?.length ?? 0})` : ''}</div>
+                                      return <div className='text-[10px] text-muted-foreground truncate leading-tight flex items-center gap-0.5' title={tip}><span className='truncate'>⬐ {label}{relayName ? ` (${node.dbNode?.relay_group_node_ids?.length ?? 0})` : ''}</span>{relayName && <button type='button' className='shrink-0 hover:text-destructive' title='解除中转组' onClick={(e) => { e.stopPropagation(); unbindRelayGroupMutation.mutate(node.dbNode!.id) }}><X className='size-3' /></button>}</div>
                                   })()}
                                   <div className='font-medium text-sm truncate'><Twemoji>{node.name || '未知'}</Twemoji></div>
                                 </>
@@ -3870,7 +3888,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                       const tip = relayName && node.dbNode?.relay_group_node_ids
                                         ? node.dbNode.relay_group_node_ids.map(id => nodeIdToName.get(id)).filter(Boolean).join('\n')
                                         : chainName ?? ''
-                                      return <div className='text-[10px] text-muted-foreground truncate leading-tight cursor-default' title={tip}>⬐ {label}{relayName ? ` (${node.dbNode?.relay_group_node_ids?.length ?? 0})` : ''}</div>
+                                      return <div className='text-[10px] text-muted-foreground truncate leading-tight flex items-center gap-0.5' title={tip}><span className='truncate'>⬐ {label}{relayName ? ` (${node.dbNode?.relay_group_node_ids?.length ?? 0})` : ''}</span>{relayName && <button type='button' className='shrink-0 hover:text-destructive' title='解除中转组' onClick={(e) => { e.stopPropagation(); unbindRelayGroupMutation.mutate(node.dbNode!.id) }}><X className='size-3' /></button>}</div>
                                           })()}
                                           <div className='font-medium text-sm truncate'><Twemoji>{node.name || '未知'}</Twemoji></div>
                                         </>
@@ -4196,7 +4214,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                       const tip = relayName && node.dbNode?.relay_group_node_ids
                                         ? node.dbNode.relay_group_node_ids.map(id => nodeIdToName.get(id)).filter(Boolean).join('\n')
                                         : chainName ?? ''
-                                      return <div className='text-[10px] text-muted-foreground truncate leading-tight cursor-default' title={tip}>⬐ {label}{relayName ? ` (${node.dbNode?.relay_group_node_ids?.length ?? 0})` : ''}</div>
+                                      return <div className='text-[10px] text-muted-foreground truncate leading-tight flex items-center gap-0.5' title={tip}><span className='truncate'>⬐ {label}{relayName ? ` (${node.dbNode?.relay_group_node_ids?.length ?? 0})` : ''}</span>{relayName && <button type='button' className='shrink-0 hover:text-destructive' title='解除中转组' onClick={(e) => { e.stopPropagation(); unbindRelayGroupMutation.mutate(node.dbNode!.id) }}><X className='size-3' /></button>}</div>
                                     })()}
                                     <div className='flex items-center gap-1'>
                                       <span className='truncate'><Twemoji>{node.name || '未知'}</Twemoji></span>
@@ -4634,7 +4652,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                       const tip = relayName && node.dbNode?.relay_group_node_ids
                                         ? node.dbNode.relay_group_node_ids.map(id => nodeIdToName.get(id)).filter(Boolean).join('\n')
                                         : chainName ?? ''
-                                      return <div className='text-[10px] text-muted-foreground truncate leading-tight cursor-default' title={tip}>⬐ {label}{relayName ? ` (${node.dbNode?.relay_group_node_ids?.length ?? 0})` : ''}</div>
+                                      return <div className='text-[10px] text-muted-foreground truncate leading-tight flex items-center gap-0.5' title={tip}><span className='truncate'>⬐ {label}{relayName ? ` (${node.dbNode?.relay_group_node_ids?.length ?? 0})` : ''}</span>{relayName && <button type='button' className='shrink-0 hover:text-destructive' title='解除中转组' onClick={(e) => { e.stopPropagation(); unbindRelayGroupMutation.mutate(node.dbNode!.id) }}><X className='size-3' /></button>}</div>
                                     })()}
                                     <div className='flex items-center gap-2 min-w-0'>
                                       <span className='truncate flex-1 min-w-0 font-medium text-sm' title={node.name || '未知'}><Twemoji>{node.name || '未知'}</Twemoji></span>
@@ -4899,7 +4917,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                       const tip = relayName && node.dbNode?.relay_group_node_ids
                                         ? node.dbNode.relay_group_node_ids.map(id => nodeIdToName.get(id)).filter(Boolean).join('\n')
                                         : chainName ?? ''
-                                      return <div className='text-[10px] text-muted-foreground truncate leading-tight cursor-default' title={tip}>⬐ {label}{relayName ? ` (${node.dbNode?.relay_group_node_ids?.length ?? 0})` : ''}</div>
+                                      return <div className='text-[10px] text-muted-foreground truncate leading-tight flex items-center gap-0.5' title={tip}><span className='truncate'>⬐ {label}{relayName ? ` (${node.dbNode?.relay_group_node_ids?.length ?? 0})` : ''}</span>{relayName && <button type='button' className='shrink-0 hover:text-destructive' title='解除中转组' onClick={(e) => { e.stopPropagation(); unbindRelayGroupMutation.mutate(node.dbNode!.id) }}><X className='size-3' /></button>}</div>
                                   })()}
                                   <div className='flex items-center gap-2 min-w-0'>
                                     <span className='truncate flex-1 min-w-0' title={node.name || '未知'}><Twemoji>{node.name || '未知'}</Twemoji></span>
@@ -5457,7 +5475,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                       const tip = relayName && node.dbNode?.relay_group_node_ids
                                         ? node.dbNode.relay_group_node_ids.map(id => nodeIdToName.get(id)).filter(Boolean).join('\n')
                                         : chainName ?? ''
-                                      return <div className='text-[10px] text-muted-foreground truncate leading-tight cursor-default' title={tip}>⬐ {label}{relayName ? ` (${node.dbNode?.relay_group_node_ids?.length ?? 0})` : ''}</div>
+                                      return <div className='text-[10px] text-muted-foreground truncate leading-tight flex items-center gap-0.5' title={tip}><span className='truncate'>⬐ {label}{relayName ? ` (${node.dbNode?.relay_group_node_ids?.length ?? 0})` : ''}</span>{relayName && <button type='button' className='shrink-0 hover:text-destructive' title='解除中转组' onClick={(e) => { e.stopPropagation(); unbindRelayGroupMutation.mutate(node.dbNode!.id) }}><X className='size-3' /></button>}</div>
                                     })()}
                                     <div className='flex items-center gap-2 min-w-0'>
                                       <span className='truncate flex-1 min-w-0 font-medium text-sm' title={node.name || '未知'}><Twemoji>{node.name || '未知'}</Twemoji></span>
