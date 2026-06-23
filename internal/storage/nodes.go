@@ -331,6 +331,9 @@ func (r *TrafficRepository) DeleteNode(ctx context.Context, id int64, username s
 	// 清除引用了该节点作为中转节点的 chain_proxy_node_id
 	_, _ = r.db.ExecContext(ctx, `UPDATE nodes SET chain_proxy_node_id = NULL WHERE chain_proxy_node_id = ? AND username = ?`, id, username)
 
+	// 从其他节点的中转组成员中移除该节点；若中转组因此为空，清除整个中转组配置
+	r.pruneRelayGroupMember(ctx, id, username)
+
 	// 检查该 raw_url 是否还有其他节点使用
 	// 如果没有，则删除对应的外部订阅及其关联的代理集合配置
 	if rawURL != "" {
@@ -360,6 +363,54 @@ func (r *TrafficRepository) DeleteNode(ctx context.Context, id int64, username s
 	}
 
 	return nil
+}
+
+// pruneRelayGroupMember 在删除节点后，从同一用户其他节点的中转组成员列表中移除该节点 ID。
+// 若移除后某节点的中转组成员为空，则直接清除其整个中转组配置（relay_group_name + relay_group_node_ids），
+// 使该节点在生成订阅时回退为普通节点，避免悬空的中转组引用。
+func (r *TrafficRepository) pruneRelayGroupMember(ctx context.Context, deletedID int64, username string) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, relay_group_node_ids FROM nodes WHERE username = ? AND relay_group_node_ids != '' AND relay_group_node_ids != '[]'`, username)
+	if err != nil {
+		return
+	}
+	type pending struct {
+		id  int64
+		ids []int64
+	}
+	var updates []pending
+	for rows.Next() {
+		var nid int64
+		var idsJSON string
+		if err := rows.Scan(&nid, &idsJSON); err != nil {
+			continue
+		}
+		var ids []int64
+		if err := json.Unmarshal([]byte(idsJSON), &ids); err != nil {
+			continue
+		}
+		var filtered []int64
+		removed := false
+		for _, x := range ids {
+			if x == deletedID {
+				removed = true
+				continue
+			}
+			filtered = append(filtered, x)
+		}
+		if removed {
+			updates = append(updates, pending{id: nid, ids: filtered})
+		}
+	}
+	rows.Close()
+
+	for _, u := range updates {
+		if len(u.ids) == 0 {
+			// 中转组成员已全部删除：清除整个中转组配置
+			_, _ = r.db.ExecContext(ctx, `UPDATE nodes SET relay_group_name = '', relay_group_node_ids = '[]', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND username = ?`, u.id, username)
+		} else {
+			_, _ = r.db.ExecContext(ctx, `UPDATE nodes SET relay_group_node_ids = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND username = ?`, serializeRelayGroupNodeIDs(u.ids), u.id, username)
+		}
+	}
 }
 
 // DeleteNodeForSync removes a node without triggering external subscription cleanup.

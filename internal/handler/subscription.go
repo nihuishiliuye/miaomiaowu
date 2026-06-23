@@ -2020,75 +2020,92 @@ func injectRelayGroups(ctx context.Context, repo *storage.TrafficRepository, use
 		return
 	}
 
-	nodeIDToName := make(map[int64]string, len(nodes))
+	nodeByID := make(map[int64]storage.Node, len(nodes))
 	for _, n := range nodes {
-		nodeIDToName[n.ID] = n.NodeName
+		nodeByID[n.ID] = n
 	}
 
+	// 定位订阅文件中的 proxies 序列，并收集已存在的节点名（落地节点）
+	var proxiesNode *yaml.Node
+	for i := 0; i < len(rootMap.Content); i += 2 {
+		if rootMap.Content[i].Value == "proxies" {
+			if rootMap.Content[i+1].Kind == yaml.SequenceNode {
+				proxiesNode = rootMap.Content[i+1]
+			}
+			break
+		}
+	}
+	if proxiesNode == nil {
+		return
+	}
+	existingNames := make(map[string]bool)
+	for _, pn := range proxiesNode.Content {
+		if pn.Kind == yaml.MappingNode {
+			existingNames[yamlMapGet(pn, "name")] = true
+		}
+	}
+
+	// 仅处理“落地（源）节点已存在于订阅中”的中转组：
+	// 注入 dialer-proxy、按需把缺失的底层节点补入 proxies、生成中转代理组
 	type relayInfo struct {
-		sourceName string
-		groupName  string
-		proxies    []string
+		groupName string
+		proxies   []string
 	}
 	relayMap := make(map[string]*relayInfo)
+	relayBySource := make(map[string]string) // 源节点名 -> 组名
 	for _, n := range nodes {
-		if len(n.RelayGroupNodeIDs) == 0 || n.RelayGroupName == "" {
+		if n.RelayGroupName == "" || len(n.RelayGroupNodeIDs) == 0 {
 			continue
 		}
+		if !existingNames[n.NodeName] {
+			continue // 落地节点不在订阅里，不插入中转组
+		}
+		relayBySource[n.NodeName] = n.RelayGroupName
 		if _, exists := relayMap[n.RelayGroupName]; exists {
 			continue
 		}
-		var proxies []string
+		var members []string
 		for _, rid := range n.RelayGroupNodeIDs {
-			if name, ok := nodeIDToName[rid]; ok {
-				proxies = append(proxies, name)
+			member, ok := nodeByID[rid]
+			if !ok || !member.Enabled {
+				continue // 底层节点已删除或被禁用：剔除，避免悬空引用
+			}
+			members = append(members, member.NodeName)
+			// 底层节点定义若不在订阅里，从节点表补入根 proxies
+			if !existingNames[member.NodeName] {
+				var pc map[string]any
+				if err := json.Unmarshal([]byte(member.ClashConfig), &pc); err != nil {
+					continue
+				}
+				pc["name"] = member.NodeName
+				proxiesNode.Content = append(proxiesNode.Content, mapToYAMLNode(pc))
+				existingNames[member.NodeName] = true
 			}
 		}
-		if len(proxies) > 0 {
-			relayMap[n.RelayGroupName] = &relayInfo{groupName: n.RelayGroupName, proxies: proxies}
+		if len(members) > 0 {
+			relayMap[n.RelayGroupName] = &relayInfo{groupName: n.RelayGroupName, proxies: members}
 		}
 	}
 	if len(relayMap) == 0 {
 		return
 	}
-	var relays []relayInfo
-	for _, r := range relayMap {
-		relays = append(relays, *r)
-	}
 
-	// 给源节点注入 dialer-proxy
-	for i := 0; i < len(rootMap.Content); i += 2 {
-		if rootMap.Content[i].Value != "proxies" {
+	// 给落地（源）节点注入 dialer-proxy
+	for _, proxyNode := range proxiesNode.Content {
+		if proxyNode.Kind != yaml.MappingNode {
 			continue
 		}
-		proxiesNode := rootMap.Content[i+1]
-		if proxiesNode.Kind != yaml.SequenceNode {
-			break
+		groupName, ok := relayBySource[yamlMapGet(proxyNode, "name")]
+		if !ok {
+			continue
 		}
-		relayBySource := make(map[string]string)
-		for _, n := range nodes {
-			if n.RelayGroupName != "" && len(n.RelayGroupNodeIDs) > 0 {
-				relayBySource[n.NodeName] = n.RelayGroupName
-			}
+		if yamlMapGet(proxyNode, "dialer-proxy") != "" {
+			continue
 		}
-		for _, proxyNode := range proxiesNode.Content {
-			if proxyNode.Kind != yaml.MappingNode {
-				continue
-			}
-			name := yamlMapGet(proxyNode, "name")
-			groupName, ok := relayBySource[name]
-			if !ok {
-				continue
-			}
-			if yamlMapGet(proxyNode, "dialer-proxy") != "" {
-				continue
-			}
-			proxyNode.Content = append(proxyNode.Content,
-				&yaml.Node{Kind: yaml.ScalarNode, Value: "dialer-proxy"},
-				&yaml.Node{Kind: yaml.ScalarNode, Value: groupName},
-			)
-		}
-		break
+		proxyNode.Content = append(proxyNode.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "dialer-proxy"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: groupName},
+		)
 	}
 
 	// 追加中转代理组到 proxy-groups
@@ -2100,7 +2117,7 @@ func injectRelayGroups(ctx context.Context, repo *storage.TrafficRepository, use
 		if groupsNode.Kind != yaml.SequenceNode {
 			break
 		}
-		for _, r := range relays {
+		for _, r := range relayMap {
 			groupNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 			groupNode.Content = append(groupNode.Content,
 				&yaml.Node{Kind: yaml.ScalarNode, Value: "name"},
@@ -2335,25 +2352,20 @@ func (h *SubscriptionHandler) generateFromTemplate(ctx context.Context, username
 
 	// 构建节点 ID -> 名称映射（用于链式代理解析）
 	nodeIDToName := make(map[int64]string, len(nodes))
+	// 构建节点 ID -> 节点映射（用于中转组底层节点补全）
+	nodeByID := make(map[int64]storage.Node, len(nodes))
 	for _, node := range nodes {
 		nodeIDToName[node.ID] = node.NodeName
+		nodeByID[node.ID] = node
 	}
 
-	// 将节点转换为 proxies 格式（[]map[string]any）
-	var proxies []map[string]any
-	for _, node := range nodes {
-		if !node.Enabled {
-			continue // 跳过禁用的节点
-		}
-		// 标签过滤：只使用选中标签的节点
-		if hasTagFilter && !node.HasAnyTag(selectedTagsMap) {
-			continue
-		}
+	// buildProxyConfig 解析节点的 ClashConfig 并注入链式/中转代理的 dialer-proxy
+	buildProxyConfig := func(node storage.Node) (map[string]any, bool) {
 		// ClashConfig 是 JSON 格式的字符串，需要解析
 		var proxyConfig map[string]any
 		if err := json.Unmarshal([]byte(node.ClashConfig), &proxyConfig); err != nil {
 			logger.Info("[模板生成] 解析节点配置失败，跳过", "node", node.NodeName, "error", err)
-			continue
+			return nil, false
 		}
 		// 确保节点名称正确（使用数据库中的名称）
 		proxyConfig["name"] = node.NodeName
@@ -2367,11 +2379,34 @@ func (h *SubscriptionHandler) generateFromTemplate(ctx context.Context, username
 		if len(node.RelayGroupNodeIDs) > 0 && node.RelayGroupName != "" {
 			proxyConfig["dialer-proxy"] = node.RelayGroupName
 		}
+		return proxyConfig, true
+	}
+
+	// 将节点转换为 proxies 格式（[]map[string]any）
+	// inRootProxies 记录已写入根 proxies 的节点名，用于中转组底层节点去重补全
+	var proxies []map[string]any
+	inRootProxies := make(map[string]bool)
+	for _, node := range nodes {
+		if !node.Enabled {
+			continue // 跳过禁用的节点
+		}
+		// 标签过滤：只使用选中标签的节点
+		if hasTagFilter && !node.HasAnyTag(selectedTagsMap) {
+			continue
+		}
+		proxyConfig, ok := buildProxyConfig(node)
+		if !ok {
+			continue
+		}
 		proxies = append(proxies, proxyConfig)
+		inRootProxies[node.NodeName] = true
 	}
 
 	// 中转组：按组名去重，同名组只生成一个 proxy-group
+	// extraProxies 收集中转组引用、但未被标签过滤纳入主 proxies 的底层节点，
+	// 仅补入根 proxies 字段（不参与模板的普通/地区代理组展开）
 	relayGroupMap := make(map[string]map[string]any)
+	var extraProxies []map[string]any
 	for _, node := range nodes {
 		if !node.Enabled || len(node.RelayGroupNodeIDs) == 0 || node.RelayGroupName == "" {
 			continue
@@ -2384,8 +2419,19 @@ func (h *SubscriptionHandler) generateFromTemplate(ctx context.Context, username
 		}
 		var groupProxies []string
 		for _, rid := range node.RelayGroupNodeIDs {
-			if name, ok := nodeIDToName[rid]; ok {
-				groupProxies = append(groupProxies, name)
+			member, ok := nodeByID[rid]
+			if !ok || !member.Enabled {
+				// 底层节点已删除或被禁用：从中转组剔除，避免悬空引用
+				logger.Info("[模板生成] 中转组底层节点不可用，已剔除", "group", node.RelayGroupName, "node_id", rid)
+				continue
+			}
+			groupProxies = append(groupProxies, member.NodeName)
+			// 底层节点若未进入主 proxies（被标签过滤），补入根 proxies
+			if !inRootProxies[member.NodeName] {
+				if pc, ok := buildProxyConfig(member); ok {
+					extraProxies = append(extraProxies, pc)
+					inRootProxies[member.NodeName] = true
+				}
 			}
 		}
 		if len(groupProxies) > 0 {
@@ -2441,7 +2487,11 @@ func (h *SubscriptionHandler) generateFromTemplate(ctx context.Context, username
 	}
 
 	// 5. 注入代理节点到proxies字段（与预览保持一致）
-	result, err = injectProxiesIntoTemplate(result, proxies)
+	// 根 proxies 字段额外包含中转组引用的底层节点，确保中转代理组引用不悬空
+	rootProxies := make([]map[string]any, 0, len(proxies)+len(extraProxies))
+	rootProxies = append(rootProxies, proxies...)
+	rootProxies = append(rootProxies, extraProxies...)
+	result, err = injectProxiesIntoTemplate(result, rootProxies)
 	if err != nil {
 		return nil, fmt.Errorf("注入代理节点失败: %w", err)
 	}
