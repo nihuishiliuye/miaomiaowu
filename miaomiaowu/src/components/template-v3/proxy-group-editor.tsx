@@ -265,6 +265,13 @@ export function ProxyGroupEditor({
                     <span className="text-sm">区域代理组</span>
                   </div>
                 )}
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={group.includeDefaultOutbound}
+                    onCheckedChange={(v) => updateField('includeDefaultOutbound', v)}
+                  />
+                  <span className="text-sm">默认出站</span>
+                </div>
               </div>
             </div>
 
@@ -278,6 +285,7 @@ export function ProxyGroupEditor({
                 showNodesMarker={hasProxyNodes(group)}
                 showProvidersMarker={hasProxyProviders(group)}
                 showRegionGroupsMarker={group.includeRegionProxyGroups}
+                showDefaultOutboundMarker={group.includeDefaultOutbound}
                 placeholder="选择要引用的代理组"
               />
             </div>

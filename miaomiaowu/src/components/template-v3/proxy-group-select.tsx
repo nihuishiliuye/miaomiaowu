@@ -9,9 +9,13 @@ import {
   PROXY_NODES_MARKER,
   PROXY_PROVIDERS_MARKER,
   REGION_PROXY_GROUPS_MARKER,
+  DIRECT_MARKER,
+  REJECT_MARKER,
   PROXY_NODES_DISPLAY,
   PROXY_PROVIDERS_DISPLAY,
   REGION_PROXY_GROUPS_DISPLAY,
+  DIRECT_DISPLAY,
+  REJECT_DISPLAY,
 } from '@/lib/template-v3-utils'
 import {
   DndContext,
@@ -42,6 +46,7 @@ interface ProxyGroupSelectProps {
   showNodesMarker?: boolean
   showProvidersMarker?: boolean
   showRegionGroupsMarker?: boolean
+  showDefaultOutboundMarker?: boolean
   placeholder?: string
 }
 
@@ -50,9 +55,44 @@ interface SortableItemProps {
   onRemove?: (id: string) => void
 }
 
+// 特殊占位项(由开关控制、不可单独删除、仅可拖动排序)
+const SPECIAL_MARKERS = new Set<string>([
+  PROXY_NODES_MARKER,
+  PROXY_PROVIDERS_MARKER,
+  REGION_PROXY_GROUPS_MARKER,
+  DIRECT_MARKER,
+  REJECT_MARKER,
+])
+
+function isSpecialMarker(id: string): boolean {
+  return SPECIAL_MARKERS.has(id)
+}
+
+function markerDisplayName(id: string): string {
+  switch (id) {
+    case PROXY_NODES_MARKER: return PROXY_NODES_DISPLAY
+    case PROXY_PROVIDERS_MARKER: return PROXY_PROVIDERS_DISPLAY
+    case REGION_PROXY_GROUPS_MARKER: return REGION_PROXY_GROUPS_DISPLAY
+    case DIRECT_MARKER: return DIRECT_DISPLAY
+    case REJECT_MARKER: return REJECT_DISPLAY
+    default: return id
+  }
+}
+
+function markerBgClass(id: string): string {
+  switch (id) {
+    case PROXY_NODES_MARKER: return 'bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700'
+    case PROXY_PROVIDERS_MARKER: return 'bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700'
+    case REGION_PROXY_GROUPS_MARKER: return 'bg-orange-100 dark:bg-orange-900/30 border border-orange-300 dark:border-orange-700'
+    case DIRECT_MARKER:
+    case REJECT_MARKER: return 'bg-slate-100 dark:bg-slate-800/50 border border-slate-300 dark:border-slate-600'
+    default: return 'bg-secondary'
+  }
+}
+
 function SortableItem({ id, onRemove }: SortableItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
-  const isMarker = id === PROXY_NODES_MARKER || id === PROXY_PROVIDERS_MARKER || id === REGION_PROXY_GROUPS_MARKER
+  const isMarker = isSpecialMarker(id)
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -61,29 +101,14 @@ function SortableItem({ id, onRemove }: SortableItemProps) {
     zIndex: isDragging ? 1 : 0,
   }
 
-  const getDisplayName = () => {
-    if (id === PROXY_NODES_MARKER) return PROXY_NODES_DISPLAY
-    if (id === PROXY_PROVIDERS_MARKER) return PROXY_PROVIDERS_DISPLAY
-    if (id === REGION_PROXY_GROUPS_MARKER) return REGION_PROXY_GROUPS_DISPLAY
-    return id
-  }
-
-  const bgClass = isMarker
-    ? id === PROXY_NODES_MARKER
-      ? 'bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700'
-      : id === PROXY_PROVIDERS_MARKER
-        ? 'bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700'
-        : 'bg-orange-100 dark:bg-orange-900/30 border border-orange-300 dark:border-orange-700'
-    : 'bg-secondary'
-
   return (
     <div
       ref={setNodeRef}
       style={style}
-      className={cn('flex items-center gap-1 rounded-md px-2 py-1', bgClass)}
+      className={cn('flex items-center gap-1 rounded-md px-2 py-1', markerBgClass(id))}
     >
       <GripVertical className="h-3 w-3 cursor-grab text-muted-foreground" {...attributes} {...listeners} />
-      <span className="text-sm">{getDisplayName()}</span>
+      <span className="text-sm">{markerDisplayName(id)}</span>
       {!isMarker && onRemove && (
         <Button
           variant="ghost"
@@ -99,27 +124,10 @@ function SortableItem({ id, onRemove }: SortableItemProps) {
 }
 
 function DragOverlayItem({ id }: { id: string }) {
-  const isMarker = id === PROXY_NODES_MARKER || id === PROXY_PROVIDERS_MARKER || id === REGION_PROXY_GROUPS_MARKER
-
-  const getDisplayName = () => {
-    if (id === PROXY_NODES_MARKER) return PROXY_NODES_DISPLAY
-    if (id === PROXY_PROVIDERS_MARKER) return PROXY_PROVIDERS_DISPLAY
-    if (id === REGION_PROXY_GROUPS_MARKER) return REGION_PROXY_GROUPS_DISPLAY
-    return id
-  }
-
-  const bgClass = isMarker
-    ? id === PROXY_NODES_MARKER
-      ? 'bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700'
-      : id === PROXY_PROVIDERS_MARKER
-        ? 'bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700'
-        : 'bg-orange-100 dark:bg-orange-900/30 border border-orange-300 dark:border-orange-700'
-    : 'bg-secondary'
-
   return (
-    <div className={cn('flex items-center gap-1 rounded-md px-2 py-1 shadow-lg', bgClass)}>
+    <div className={cn('flex items-center gap-1 rounded-md px-2 py-1 shadow-lg', markerBgClass(id))}>
       <GripVertical className="h-3 w-3 cursor-grab text-muted-foreground" />
-      <span className="text-sm">{getDisplayName()}</span>
+      <span className="text-sm">{markerDisplayName(id)}</span>
     </div>
   )
 }
@@ -132,6 +140,7 @@ export function ProxyGroupSelect({
   showNodesMarker = false,
   showProvidersMarker = false,
   showRegionGroupsMarker = false,
+  showDefaultOutboundMarker = false,
   placeholder = '选择代理组',
 }: ProxyGroupSelectProps) {
   const [open, setOpen] = useState(false)
@@ -196,6 +205,7 @@ export function ProxyGroupSelect({
     if (item === PROXY_NODES_MARKER) return showNodesMarker
     if (item === PROXY_PROVIDERS_MARKER) return showProvidersMarker
     if (item === REGION_PROXY_GROUPS_MARKER) return showRegionGroupsMarker
+    if (item === DIRECT_MARKER || item === REJECT_MARKER) return showDefaultOutboundMarker
     return true
   })
 
@@ -211,6 +221,11 @@ export function ProxyGroupSelect({
     if (showProvidersMarker && !result.includes(PROXY_PROVIDERS_MARKER)) {
       result.push(PROXY_PROVIDERS_MARKER)
     }
+    // 默认出站:DIRECT / REJECT 成对加入(置于末尾)
+    if (showDefaultOutboundMarker) {
+      if (!result.includes(DIRECT_MARKER)) result.push(DIRECT_MARKER)
+      if (!result.includes(REJECT_MARKER)) result.push(REJECT_MARKER)
+    }
     // Remove markers that shouldn't be shown
     if (!showNodesMarker) {
       result = result.filter(v => v !== PROXY_NODES_MARKER)
@@ -220,6 +235,9 @@ export function ProxyGroupSelect({
     }
     if (!showRegionGroupsMarker) {
       result = result.filter(v => v !== REGION_PROXY_GROUPS_MARKER)
+    }
+    if (!showDefaultOutboundMarker) {
+      result = result.filter(v => v !== DIRECT_MARKER && v !== REJECT_MARKER)
     }
     return result
   }

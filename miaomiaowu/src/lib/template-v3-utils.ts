@@ -39,6 +39,11 @@ export const PROXY_NODES_MARKER = '__PROXY_NODES__'
 export const PROXY_PROVIDERS_MARKER = '__PROXY_PROVIDERS__'
 export const REGION_PROXY_GROUPS_MARKER = '__REGION_PROXY_GROUPS__'
 
+// 默认出站:DIRECT / REJECT 是 Clash 内置代理名，直接以字面量参与代理顺序与输出，
+// 由「默认出站」开关(includeDefaultOutbound)控制是否出现，可在代理顺序里拖动排序。
+export const DIRECT_MARKER = 'DIRECT'
+export const REJECT_MARKER = 'REJECT'
+
 // Type for proxy order item
 export type ProxyOrderItem = string // Can be group name, PROXY_NODES_MARKER, PROXY_PROVIDERS_MARKER, or REGION_PROXY_GROUPS_MARKER
 
@@ -98,6 +103,7 @@ export interface ProxyGroupFormState {
   includeAllProxies: boolean
   includeAllProviders: boolean
   includeRegionProxyGroups: boolean
+  includeDefaultOutbound: boolean // 是否在代理顺序中加入 DIRECT / REJECT
   includedProxyGroups: string[]
   proxyOrder: ProxyOrderItem[] // Order of proxy groups, nodes marker, providers marker
   staticProxies: string[]
@@ -170,6 +176,7 @@ export function createDefaultFormState(name = '新代理组'): ProxyGroupFormSta
     includeAllProxies: false,
     includeAllProviders: false,
     includeRegionProxyGroups: false,
+    includeDefaultOutbound: false,
     includedProxyGroups: [],
     proxyOrder: [],
     staticProxies: [],
@@ -215,6 +222,12 @@ export function getDefaultProxyOrder(state: ProxyGroupFormState): ProxyOrderItem
     }
   }
 
+  // 默认出站(DIRECT / REJECT)默认排在末尾
+  if (state.includeDefaultOutbound) {
+    order.push(DIRECT_MARKER)
+    order.push(REJECT_MARKER)
+  }
+
   return order
 }
 
@@ -253,6 +266,7 @@ export function formStateToConfig(state: ProxyGroupFormState): ProxyGroupV3Confi
     if (item === PROXY_NODES_MARKER) return hasProxyNodes(state)
     if (item === PROXY_PROVIDERS_MARKER) return hasProxyProviders(state)
     if (item === REGION_PROXY_GROUPS_MARKER) return state.includeRegionProxyGroups
+    if (item === DIRECT_MARKER || item === REJECT_MARKER) return state.includeDefaultOutbound
     return true
   })
   const allProxies = [...proxiesFromOrder, ...state.staticProxies]
@@ -287,6 +301,9 @@ export function configToFormState(config: ProxyGroupV3Config, allGroupNames: str
   for (const p of proxies) {
     if (p === PROXY_NODES_MARKER || p === PROXY_PROVIDERS_MARKER || p === REGION_PROXY_GROUPS_MARKER) {
       proxyOrder.push(p)
+    } else if (p === DIRECT_MARKER || p === REJECT_MARKER) {
+      // 默认出站:DIRECT / REJECT 作为可拖拽项归入代理顺序
+      proxyOrder.push(p)
     } else if (allGroupNames.includes(p)) {
       proxyOrder.push(p)
     } else {
@@ -298,6 +315,8 @@ export function configToFormState(config: ProxyGroupV3Config, allGroupNames: str
   // __PROXY_NODES__ 占位符等同于 include-all-proxies
   const hasNodesMarker = proxyOrder.includes(PROXY_NODES_MARKER)
   const hasProvidersMarker = proxyOrder.includes(PROXY_PROVIDERS_MARKER)
+  // 默认出站开关派生自 DIRECT / REJECT 是否存在(无独立配置键)
+  const includeDefaultOutbound = proxyOrder.includes(DIRECT_MARKER) || proxyOrder.includes(REJECT_MARKER)
   const includeAll = config['include-all'] || false
   const includeAllProxies = config['include-all-proxies'] || includeAll || hasNodesMarker
   const includeAllProviders = config['include-all-providers'] || includeAll || hasProvidersMarker
@@ -330,7 +349,8 @@ export function configToFormState(config: ProxyGroupV3Config, allGroupNames: str
     includeAllProxies,
     includeAllProviders,
     includeRegionProxyGroups: config['include-region-proxy-groups'] || false,
-    includedProxyGroups: proxyOrder.filter(p => p !== PROXY_NODES_MARKER && p !== PROXY_PROVIDERS_MARKER && p !== REGION_PROXY_GROUPS_MARKER),
+    includeDefaultOutbound,
+    includedProxyGroups: proxyOrder.filter(p => p !== PROXY_NODES_MARKER && p !== PROXY_PROVIDERS_MARKER && p !== REGION_PROXY_GROUPS_MARKER && p !== DIRECT_MARKER && p !== REJECT_MARKER),
     proxyOrder,
     staticProxies,
     url: config.url || 'https://www.gstatic.com/generate_204',
@@ -389,6 +409,9 @@ export function updateProxyGroups(content: string, groups: ProxyGroupFormState[]
 export const PROXY_NODES_DISPLAY = '⛓️‍💥 代理节点'
 export const PROXY_PROVIDERS_DISPLAY = '📦 代理集合'
 export const REGION_PROXY_GROUPS_DISPLAY = '🌏 区域代理组'
+// DIRECT / REJECT 仅在编辑器代理顺序里用友好名展示；预览与实际输出保持字面量
+export const DIRECT_DISPLAY = '🎯 直连 (DIRECT)'
+export const REJECT_DISPLAY = '🚫 拒绝 (REJECT)'
 
 // Generate proxy-groups YAML preview from form states
 export function generateProxyGroupsPreview(groups: ProxyGroupFormState[]): string {
