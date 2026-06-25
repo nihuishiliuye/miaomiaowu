@@ -1,5 +1,5 @@
 import { get as _get } from 'lodash'
-import { ProxyNode } from '@/lib/proxy-parser'
+import { ProxyNode } from '@/lib/proxy-types'
 
 // source: https://stackoverflow.com/a/36760050
 const IPV4_REGEX = /^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)(\.(?!$)|$)){4}$/

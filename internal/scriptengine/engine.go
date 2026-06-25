@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"miaomiaowu/internal/logger"
-	"miaomiaowu/internal/substore"
+	"github.com/MMWOrg/mmwX-plugins/proxyparser/substore"
 
 	"github.com/dop251/goja"
 )

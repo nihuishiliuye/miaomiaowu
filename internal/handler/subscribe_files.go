@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"miaomiaowu/internal/storage"
-	"miaomiaowu/internal/substore"
+	"github.com/MMWOrg/mmwX-plugins/proxyparser/substore"
 	"miaomiaowu/internal/validator"
 
 	"gopkg.in/yaml.v3"

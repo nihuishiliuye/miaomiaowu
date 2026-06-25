@@ -9,7 +9,7 @@ import (
 
 	"miaomiaowu/internal/auth"
 	"miaomiaowu/internal/storage"
-	"miaomiaowu/internal/substore"
+	"github.com/MMWOrg/mmwX-plugins/proxyparser/substore"
 
 	"gopkg.in/yaml.v3"
 )

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"miaomiaowu/internal/storage"
-	"miaomiaowu/internal/substore"
+	"github.com/MMWOrg/mmwX-plugins/proxyparser/substore"
 )
 
 type templateRequest struct {

@@ -129,31 +129,6 @@ func applyNodeNameFilterToClashProxies(proxies []map[string]any, filterRegex *re
 	return filteredProxies, filteredCount
 }
 
-func applyNodeNameFilterToV2rayURIs(uris []string, filterRegex *regexp.Regexp, filterPattern string) ([]string, int) {
-	if filterRegex == nil || len(uris) == 0 {
-		return uris, 0
-	}
-
-	filteredURIs := make([]string, 0, len(uris))
-	filteredCount := 0
-
-	for _, uri := range uris {
-		proxy, err := ParseProxyURL(uri)
-		if err == nil {
-			if proxyName, ok := proxy["name"].(string); ok {
-				if filterRegex.MatchString(proxyName) {
-					filteredCount++
-					logger.Info("[订阅获取] 过滤v2ray节点", "name", proxyName, "pattern", filterPattern)
-					continue
-				}
-			}
-		}
-		filteredURIs = append(filteredURIs, uri)
-	}
-
-	return filteredURIs, filteredCount
-}
-
 type nodesHandler struct {
 	repo            *storage.TrafficRepository
 	subscribeDir    string
@@ -186,6 +161,8 @@ func (h *nodesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleBatchCreate(w, r)
 	case path == "fetch-subscription" && r.Method == http.MethodPost:
 		h.handleFetchSubscription(w, r)
+	case path == "parse-uris" && r.Method == http.MethodPost:
+		h.handleParseURIs(w, r)
 	case strings.HasSuffix(path, "/probe-binding") && r.Method == http.MethodPut:
 		idSegment := strings.TrimSuffix(path, "/probe-binding")
 		h.handleUpdateProbeBinding(w, r, idSegment)
@@ -1092,9 +1069,11 @@ func (h *nodesHandler) handleFetchSubscription(w http.ResponseWriter, r *http.Re
 	}
 
 	var req struct {
-		URL            string `json:"url"`
-		UserAgent      string `json:"user_agent"`
-		SkipCertVerify bool   `json:"skip_cert_verify"`
+		URL                 string `json:"url"`
+		UserAgent           string `json:"user_agent"`
+		FetchSkipCertVerify bool   `json:"fetch_skip_cert_verify"` // 仅控制拉取订阅时跳过 HTTPS 证书校验
+		ForceNodeSkipCert   bool   `json:"force_node_skip_cert"`   // 是否给每个导入节点强制写 skip-cert-verify
+		SkipCertVerify      bool   `json:"skip_cert_verify"`       // 兼容旧前端：等价 fetch_skip_cert_verify
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1106,6 +1085,10 @@ func (h *nodesHandler) handleFetchSubscription(w http.ResponseWriter, r *http.Re
 		writeBadRequest(w, "订阅URL是必填项")
 		return
 	}
+
+	// 拉取订阅是否跳过证书校验（兼容旧字段 skip_cert_verify）。
+	// 注意：这与"是否给节点强制写 skip-cert-verify"(ForceNodeSkipCert) 是两个独立语义。
+	fetchSkip := req.FetchSkipCertVerify || req.SkipCertVerify
 
 	// 如果没有提供 User-Agent，使用默认值
 	userAgent := req.UserAgent
@@ -1136,8 +1119,8 @@ func (h *nodesHandler) handleFetchSubscription(w http.ResponseWriter, r *http.Re
 		Timeout: 30 * time.Second,
 	}
 
-	// 如果需要跳过证书验证
-	if req.SkipCertVerify {
+	// 如果需要跳过证书验证（仅影响拉取订阅的 HTTP client，不影响节点配置）
+	if fetchSkip {
 		client.Transport = &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}
@@ -1152,7 +1135,7 @@ func (h *nodesHandler) handleFetchSubscription(w http.ResponseWriter, r *http.Re
 	// 添加User-Agent头
 	httpReq.Header.Set("User-Agent", userAgent)
 
-	logger.Info("[订阅获取] 开始请求外部订阅", "url", req.URL, "user_agent", userAgent, "skip_cert_verify", req.SkipCertVerify)
+	logger.Info("[订阅获取] 开始请求外部订阅", "url", req.URL, "user_agent", userAgent, "fetch_skip_cert_verify", fetchSkip)
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
@@ -1248,31 +1231,29 @@ func (h *nodesHandler) handleFetchSubscription(w http.ResponseWriter, r *http.Re
 			return
 		}
 
-		// 按行分割，过滤空行
-		lines := strings.Split(decoded, "\n")
-		var uris []string
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				uris = append(uris, line)
-			}
-		}
-
-		if len(uris) == 0 {
+		// 后端统一解析为 clash 节点（经 proxyparser），与 clash 分支同构返回 proxies
+		proxies, err := ParseV2raySubscription(decoded)
+		if err != nil || len(proxies) == 0 {
 			writeError(w, http.StatusBadRequest, errors.New("订阅中没有找到代理节点"))
 			return
 		}
-
-		filteredURIs, filteredCount := applyNodeNameFilterToV2rayURIs(uris, filterRegex, nodeNameFilter)
-		if filteredCount > 0 {
-			logger.Info("[订阅获取] v2ray节点过滤完成", "filtered_count", filteredCount, "remaining_count", len(filteredURIs))
+		for _, proxy := range proxies {
+			convertNilToEmptyStringInMap(proxy)
+			decodeProxyURLFields(proxy)
+			if req.ForceNodeSkipCert {
+				proxy["skip-cert-verify"] = true
+			}
 		}
 
-		logger.Info("[订阅获取] v2ray格式解析成功", "url", req.URL, "uri_count", len(filteredURIs))
+		filteredProxies, filteredCount := applyNodeNameFilterToClashProxies(proxies, filterRegex, nodeNameFilter)
+		if filteredCount > 0 {
+			logger.Info("[订阅获取] v2ray节点过滤完成", "filtered_count", filteredCount, "remaining_count", len(filteredProxies))
+		}
+
+		logger.Info("[订阅获取] v2ray格式解析成功", "url", req.URL, "node_count", len(filteredProxies))
 		response := map[string]any{
-			"format":         "v2ray",
-			"uris":           filteredURIs,
-			"count":          len(filteredURIs),
+			"proxies":        filteredProxies,
+			"count":          len(filteredProxies),
 			"filtered_count": filteredCount,
 			"suggested_tag":  suggestedTag,
 		}
@@ -1324,6 +1305,9 @@ func (h *nodesHandler) handleFetchSubscription(w http.ResponseWriter, r *http.Re
 	for _, proxy := range clashConfig.Proxies {
 		convertNilToEmptyStringInMap(proxy)
 		decodeProxyURLFields(proxy)
+		if req.ForceNodeSkipCert {
+			proxy["skip-cert-verify"] = true
+		}
 	}
 
 	filteredProxies, filteredCount := applyNodeNameFilterToClashProxies(clashConfig.Proxies, filterRegex, nodeNameFilter)
@@ -1349,6 +1333,47 @@ func (h *nodesHandler) handleFetchSubscription(w http.ResponseWriter, r *http.Re
 		}
 	}
 	respondJSON(w, http.StatusOK, response)
+}
+
+// handleParseURIs 解析前端粘贴的多行 URI / base64 订阅文本，返回 clash 节点。
+// 前端把含 :// 的行发到这里（Surge INI 行仍由前端本地 parseSurgeLine 兜底）。
+// POST /api/admin/nodes/parse-uris  body: {content, force_node_skip_cert}
+func (h *nodesHandler) handleParseURIs(w http.ResponseWriter, r *http.Request) {
+	username := auth.UsernameFromContext(r.Context())
+	if username == "" {
+		writeError(w, http.StatusUnauthorized, errors.New("用户未认证"))
+		return
+	}
+	var req struct {
+		Content           string `json:"content"`
+		ForceNodeSkipCert bool   `json:"force_node_skip_cert"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeBadRequest(w, "请求格式不正确")
+		return
+	}
+	if strings.TrimSpace(req.Content) == "" {
+		writeBadRequest(w, "内容不能为空")
+		return
+	}
+
+	proxies, err := ParseV2raySubscription(req.Content)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, errors.New("解析失败: "+err.Error()))
+		return
+	}
+	for _, proxy := range proxies {
+		convertNilToEmptyStringInMap(proxy)
+		decodeProxyURLFields(proxy)
+		if req.ForceNodeSkipCert {
+			proxy["skip-cert-verify"] = true
+		}
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"proxies": proxies,
+		"count":   len(proxies),
+	})
 }
 
 // handleUpdateProbeBinding updates the probe server binding for a node.

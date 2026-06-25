@@ -25,7 +25,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { parseProxyUrl, parseSurgeLine, toClashProxy, type ProxyNode, type ClashProxy } from '@/lib/proxy-parser'
+import { type ProxyNode, type ClashProxy } from '@/lib/proxy-types'
 import { load as parseYAML, dump as dumpYAML } from 'js-yaml'
 import { Check, Pencil, X, Undo2, Activity, Eye, Copy, ChevronDown, Link2, Flag, GripVertical, Zap, Loader2, Expand, List, ArrowUpToLine, ArrowDownToLine, ArrowUp, ArrowDown, ArrowUpDown, Gauge } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -465,10 +465,14 @@ function NodesPage() {
   // 自定义标签状态
   const [manualTag, setManualTag] = useState<string>('手动输入')
   const [subscriptionTag, setSubscriptionTag] = useState<string>('')
-  const [skipCertVerify, setSkipCertVerify] = useState<boolean>(() => {
-    const cached = localStorage.getItem('mmw-skip-cert-verify')
-    return cached !== null ? cached === 'true' : false
+  // 拉取订阅时是否跳过 HTTPS 证书校验（持久化）。兼容旧 key mmw-skip-cert-verify。
+  const [fetchSkipCertVerify, setFetchSkipCertVerify] = useState<boolean>(() => {
+    const cached = localStorage.getItem('mmw-fetch-skip-cert')
+    if (cached !== null) return cached === 'true'
+    return localStorage.getItem('mmw-skip-cert-verify') === 'true'
   })
+  // 是否给导入节点强制写 skip-cert-verify（默认关，不污染节点原配置；不持久化）
+  const [forceNodeSkipCert, setForceNodeSkipCert] = useState<boolean>(false)
 
   // 导入节点卡片折叠状态 - 默认折叠
   const [isInputCardExpanded, setIsInputCardExpanded] = useState(false)
@@ -651,9 +655,9 @@ function NodesPage() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('mmw-skip-cert-verify', String(skipCertVerify))
+      localStorage.setItem('mmw-fetch-skip-cert', String(fetchSkipCertVerify))
     } catch {}
-  }, [skipCertVerify])
+  }, [fetchSkipCertVerify])
 
   // 处理 URL 参数：打开导入卡片并聚焦订阅输入框
   useEffect(() => {
@@ -926,7 +930,8 @@ function NodesPage() {
     const fmt = (localStorage.getItem('nodeConfigFormat') as 'json' | 'yaml') || 'json'
     let formatted: string
     try {
-      const parsed = JSON.parse(clashConfig)
+      // 重排 key: name/type/server/port 置顶 (复用 reorderProxyConfig)
+      const parsed = reorderProxyConfig(JSON.parse(clashConfig))
       formatted = fmt === 'yaml'
         ? dumpYAML(parsed, { indent: 2, lineWidth: -1, noRefs: true })
         : JSON.stringify(parsed, null, 2)
@@ -1074,10 +1079,12 @@ function NodesPage() {
     if (fmt === configFormat || !editingClashConfig) return
 
     try {
-      // 解析当前格式
-      const parsed = configFormat === 'yaml'
-        ? parseYAML(editingClashConfig.config)
-        : JSON.parse(editingClashConfig.config)
+      // 解析当前格式 (并重排 key: name/type/server/port 置顶)
+      const parsed = reorderProxyConfig(
+        (configFormat === 'yaml'
+          ? parseYAML(editingClashConfig.config)
+          : JSON.parse(editingClashConfig.config)) as ClashProxy
+      )
 
       // 转为目标格式
       const converted = fmt === 'yaml'
@@ -1998,16 +2005,15 @@ function NodesPage() {
 
   // 从订阅获取节点
   const fetchSubscriptionMutation = useMutation({
-    mutationFn: async ({ url, userAgent, skipCertVerify }: { url: string; userAgent: string; skipCertVerify: boolean }) => {
+    mutationFn: async ({ url, userAgent, fetchSkipCertVerify, forceNodeSkipCert }: { url: string; userAgent: string; fetchSkipCertVerify: boolean; forceNodeSkipCert: boolean }) => {
       const response = await api.post('/api/admin/nodes/fetch-subscription', {
         url,
         user_agent: userAgent,
-        skip_cert_verify: skipCertVerify
+        fetch_skip_cert_verify: fetchSkipCertVerify,
+        force_node_skip_cert: forceNodeSkipCert,
       })
       return response.data as {
-        format?: 'v2ray'
         proxies?: ClashProxy[]
-        uris?: string[]
         count: number
         suggested_tag?: string
       }
@@ -2027,33 +2033,9 @@ function NodesPage() {
 
       let parsed: TempNode[] = []
 
-      if (data.format === 'v2ray' && data.uris) {
-        // v2ray 格式：使用前端 proxy-parser.ts 解析 URI
-        parsed = data.uris
-          .map((uri) => {
-            const parsedNode = parseProxyUrl(uri)
-            if (!parsedNode) return null
-            const clashNode = toClashProxy(parsedNode)
-            if (skipCertVerify && clashNode) clashNode['skip-cert-verify'] = true
-            const name = parsedNode.name || '未知'
-            const normalizedParsed = cloneProxyWithName(parsedNode, name)
-            const normalizedClash = cloneProxyWithName(clashNode, name)
-
-            return {
-              id: Math.random().toString(36).substring(7),
-              rawUrl: uri,
-              name,
-              parsed: normalizedParsed,
-              clash: normalizedClash,
-              enabled: true,
-              tag: subscriptionTag.trim() || defaultTag,
-            }
-          })
-          .filter((node): node is TempNode => node !== null)
-      } else if (data.proxies) {
-        // Clash 格式：直接使用后端返回的节点
+      if (data.proxies) {
+        // 后端已统一解析(v2ray / clash 均返回 proxies),并按 force_node_skip_cert 处理过证书字段，前端直接消费
         parsed = data.proxies.map((clashNode) => {
-          if (skipCertVerify) clashNode['skip-cert-verify'] = true
           const proxyNode: ProxyNode = {
             name: clashNode.name || '未知',
             type: clashNode.type || 'unknown',
@@ -2233,13 +2215,14 @@ function NodesPage() {
     }
   }
 
-  const handleParse = () => {
+  const handleParse = async () => {
     const parsed: TempNode[] = []
 
-    // yaml 格式
+    // yaml 格式（本地解析）
     const yamlProxies = parseYAMLProxies(input)
     if (yamlProxies && yamlProxies.length > 0) {
       for (const clashNode of yamlProxies) {
+        if (forceNodeSkipCert) clashNode['skip-cert-verify'] = true
         const proxyNode: ProxyNode = {
           name: clashNode.name || '未知',
           type: clashNode.type || 'unknown',
@@ -2248,16 +2231,12 @@ function NodesPage() {
           ...clashNode,
         }
         const name = proxyNode.name || '未知'
-        if (skipCertVerify) clashNode['skip-cert-verify'] = true
-        const parsedProxy = cloneProxyWithName(proxyNode, name)
-        const clashProxy = cloneProxyWithName(clashNode, name)
-
         parsed.push({
           id: Math.random().toString(36).substring(7),
           rawUrl: '', // YAML 格式没有原始 URL
           name,
-          parsed: parsedProxy,
-          clash: clashProxy,
+          parsed: cloneProxyWithName(proxyNode, name),
+          clash: cloneProxyWithName(clashNode, name),
           enabled: true,
           tag: manualTag.trim() || '手动输入',
         })
@@ -2268,36 +2247,44 @@ function NodesPage() {
       return
     }
 
-    // v2ray 格式 / Surge INI 格式
-    const lines = input.split('\n').filter(line => line.trim())
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed) continue
-      if (trimmed.startsWith('#') || trimmed.startsWith(';') || trimmed.startsWith('[')) continue
-      // 1. URI;2. Surge INI(`节点名 = type, server, port, ...`)
-      let parsedNode: ProxyNode | null = null
-      if (trimmed.includes('://')) {
-        parsedNode = parseProxyUrl(trimmed)
-      }
-      if (!parsedNode && trimmed.includes('=')) {
-        parsedNode = parseSurgeLine(trimmed)
-      }
-      if (!parsedNode) continue
-      const clashNode = toClashProxy(parsedNode)
-      if (skipCertVerify && clashNode) clashNode['skip-cert-verify'] = true
-      const name = parsedNode?.name || clashNode?.name || '未知'
-      const normalizedParsed = cloneProxyWithName(parsedNode, name)
-      const normalizedClash = cloneProxyWithName(clashNode, name)
+    // 逐行：URI 行与 Surge INI 行(含 snell)统一交后端 proxyparser 解析
+    const lines = input
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('#') && !l.startsWith(';') && !l.startsWith('['))
+    const uriLines: string[] = lines.filter((l) => l.includes('://') || l.includes('='))
 
-      parsed.push({
-        id: Math.random().toString(36).substring(7),
-        rawUrl: trimmed,
-        name,
-        parsed: normalizedParsed,
-        clash: normalizedClash,
-        enabled: true,
-        tag: manualTag.trim() || '手动输入', // 添加标签信息
-      })
+    // 统一交后端解析
+    if (uriLines.length > 0) {
+      try {
+        const resp = await api.post('/api/admin/nodes/parse-uris', {
+          content: uriLines.join('\n'),
+          force_node_skip_cert: forceNodeSkipCert,
+        })
+        const data = resp.data as { proxies?: ClashProxy[] }
+        for (const clashNode of data.proxies || []) {
+          const proxyNode: ProxyNode = {
+            name: clashNode.name || '未知',
+            type: clashNode.type || 'unknown',
+            server: clashNode.server || '',
+            port: clashNode.port || 0,
+            ...clashNode,
+          }
+          const name = proxyNode.name || '未知'
+          parsed.push({
+            id: Math.random().toString(36).substring(7),
+            rawUrl: '',
+            name,
+            parsed: cloneProxyWithName(proxyNode, name),
+            clash: cloneProxyWithName(clashNode, name),
+            enabled: true,
+            tag: manualTag.trim() || '手动输入',
+          })
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        toast.error(`URI 解析失败: ${msg}`)
+      }
     }
 
     setTempNodes(parsed)
@@ -2398,7 +2385,8 @@ function NodesPage() {
     fetchSubscriptionMutation.mutate({
       url: subscriptionUrl,
       userAgent: finalUserAgent,
-      skipCertVerify
+      fetchSkipCertVerify,
+      forceNodeSkipCert,
     })
   }
 
@@ -2874,11 +2862,11 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                           <div className='flex items-center gap-2 shrink-0'>
                             <Switch
                               id='skip-cert-verify-manual'
-                              checked={skipCertVerify}
-                              onCheckedChange={setSkipCertVerify}
+                              checked={forceNodeSkipCert}
+                              onCheckedChange={setForceNodeSkipCert}
                             />
                             <Label htmlFor='skip-cert-verify-manual' className='text-sm whitespace-nowrap cursor-pointer'>
-                              跳过证书验证
+                              强制节点跳过证书验证
                             </Label>
                           </div>
                         </div>
@@ -2887,7 +2875,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                         </p>
                       </div>
                       <div className='flex justify-end gap-2'>
-                        <Button onClick={handleParse} disabled={!input.trim()} variant='outline'>
+                        <Button onClick={() => void handleParse()} disabled={!input.trim()} variant='outline'>
                           解析节点
                         </Button>
                         <Button
@@ -2980,11 +2968,11 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                           <div className='flex items-center gap-2 shrink-0'>
                             <Switch
                               id='skip-cert-verify'
-                              checked={skipCertVerify}
-                              onCheckedChange={setSkipCertVerify}
+                              checked={fetchSkipCertVerify}
+                              onCheckedChange={setFetchSkipCertVerify}
                             />
                             <Label htmlFor='skip-cert-verify' className='text-sm whitespace-nowrap cursor-pointer'>
-                              跳过证书验证
+                              拉取时跳过证书验证
                             </Label>
                           </div>
                         </div>
@@ -5255,7 +5243,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                           YAML
                                         </Button>
                                       </div>
-                                      <div className='flex-1 flex border rounded overflow-hidden bg-muted'>
+                                      <div className='flex-1 flex border rounded overflow-auto bg-muted'>
                                         {/* 行号列 */}
                                         <div className='flex flex-col bg-muted-foreground/10 text-muted-foreground text-xs font-mono select-none py-3 px-2 text-right'>
                                           {editingClashConfig?.config.split('\n').map((_, i) => {

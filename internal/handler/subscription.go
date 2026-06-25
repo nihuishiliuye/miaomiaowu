@@ -20,7 +20,7 @@ import (
 	"miaomiaowu/internal/notify"
 	"miaomiaowu/internal/scriptengine"
 	"miaomiaowu/internal/storage"
-	"miaomiaowu/internal/substore"
+	"github.com/MMWOrg/mmwX-plugins/proxyparser/substore"
 
 	"gopkg.in/yaml.v3"
 )
