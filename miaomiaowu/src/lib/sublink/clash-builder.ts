@@ -196,6 +196,19 @@ export class ClashConfigBuilder {
             translateOutbound('Node Select')
           ],
         })
+      } else if (groupName === "🏠 私有网络") {
+        // 私有网络默认直连：DIRECT 放在第一位
+        groups.push({
+          name: groupName,
+          type: 'select',
+          proxies: [
+            'DIRECT',
+            translateOutbound('Node Select'),
+            'REJECT',
+            translateOutbound('Auto Select'),
+            ...proxyNames,
+          ],
+        })
       } else {
         groups.push({
           name: groupName,
