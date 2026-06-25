@@ -461,6 +461,17 @@ func anyToYAMLNode(v any) *yaml.Node {
 			seqNode.Content = append(seqNode.Content, anyToYAMLNode(item))
 		}
 		return seqNode
+	case []string:
+		// 中转组 proxies 等以 []string 传入，需序列化为 YAML 序列
+		// （否则会落到 default 分支被渲染成空字符串，导致中转组成员丢失）
+		seqNode := &yaml.Node{
+			Kind: yaml.SequenceNode,
+			Tag:  "!!seq",
+		}
+		for _, item := range val {
+			seqNode.Content = append(seqNode.Content, anyToYAMLNode(item))
+		}
+		return seqNode
 	case map[string]any:
 		return mapToYAMLNode(val)
 	default:

@@ -843,7 +843,9 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 				injectLegacyDialerProxy(rootMap)
 
 				// 中转组：从数据库获取节点的中转组配置，注入 dialer-proxy 和代理组
-				if username != "" && h.repo != nil {
+				// 模板路径(fromTemplate)已在 generateFromTemplate 内注入过中转组，
+				// 此处再注入会导致重复，故仅在非模板路径执行。
+				if username != "" && h.repo != nil && !fromTemplate {
 					injectRelayGroups(r.Context(), h.repo, username, rootMap)
 				}
 

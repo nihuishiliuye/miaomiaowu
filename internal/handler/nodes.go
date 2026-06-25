@@ -222,6 +222,7 @@ func (h *nodesHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.parseChainProxyNodeID()
+	req.parseEnabled()
 
 	// 校验节点名称不为空
 	if strings.TrimSpace(req.NodeName) == "" {
@@ -387,6 +388,7 @@ func (h *nodesHandler) handleUpdate(w http.ResponseWriter, r *http.Request, idSe
 		return
 	}
 	req.parseChainProxyNodeID()
+	req.parseEnabled()
 
 	// 如果节点名称被修改，需要校验新名称
 	if req.NodeName != "" && req.NodeName != oldNodeName {
@@ -457,7 +459,10 @@ func (h *nodesHandler) handleUpdate(w http.ResponseWriter, r *http.Request, idSe
 		existing.Tags = req.Tags
 		existing.Tag = req.Tags[0]
 	}
-	existing.Enabled = req.Enabled
+	// 仅在请求显式带 enabled 时更新，避免解除/创建中转组等局部更新把节点误置为禁用
+	if req.hasEnabled() {
+		existing.Enabled = req.Enabled
+	}
 	if req.hasChainProxyNodeID() {
 		existing.ChainProxyNodeID = req.ChainProxyNodeID
 	}
@@ -981,13 +986,27 @@ type nodeRequest struct {
 	Protocol             string          `json:"protocol"`
 	ParsedConfig         string          `json:"parsed_config"`
 	ClashConfig          string          `json:"clash_config"`
-	Enabled              bool            `json:"enabled"`
+	Enabled              bool            `json:"-"`
+	RawEnabled           json.RawMessage `json:"enabled"`
 	Tag                  string          `json:"tag"`
 	Tags                 []string        `json:"tags"`
 	ChainProxyNodeID     *int64          `json:"-"`
 	RawChainProxyNodeID  json.RawMessage `json:"chain_proxy_node_id"`
 	RelayGroupName       string          `json:"relay_group_name"`
 	RawRelayGroupNodeIDs json.RawMessage `json:"relay_group_node_ids"`
+}
+
+// hasEnabled 报告请求里是否显式带了 enabled 字段(用于区分"未提供"与"false",
+// 避免局部更新如解除/创建中转组时把 enabled 误重置)。
+func (r *nodeRequest) hasEnabled() bool {
+	return r.RawEnabled != nil && string(r.RawEnabled) != "null"
+}
+
+// parseEnabled 把 RawEnabled 解析到 Enabled(未提供则保持零值 false)。
+func (r *nodeRequest) parseEnabled() {
+	if r.hasEnabled() {
+		_ = json.Unmarshal(r.RawEnabled, &r.Enabled)
+	}
 }
 
 func (r *nodeRequest) hasChainProxyNodeID() bool {
