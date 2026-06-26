@@ -718,6 +718,11 @@ CREATE INDEX IF NOT EXISTS idx_nodes_enabled ON nodes(enabled);
 		return fmt.Errorf("create tag index: %w", err)
 	}
 
+	// 节点"禁用"功能已弃用：启动时确保所有节点为启用，清理历史遗留/异常产生的 enabled=0。
+	if _, err := r.db.Exec(`UPDATE nodes SET enabled = 1 WHERE enabled = 0;`); err != nil {
+		return fmt.Errorf("enable all nodes: %w", err)
+	}
+
 	const subscribeFilesSchema = `
 CREATE TABLE IF NOT EXISTS subscribe_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

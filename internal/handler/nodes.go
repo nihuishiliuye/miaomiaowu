@@ -275,7 +275,7 @@ func (h *nodesHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		Protocol:          req.Protocol,
 		ParsedConfig:      req.ParsedConfig,
 		ClashConfig:       req.ClashConfig,
-		Enabled:           req.Enabled,
+		Enabled:           req.resolvedEnabled(true),
 		Tag:               req.Tag,
 		Tags:              req.Tags,
 		ChainProxyNodeID:  req.ChainProxyNodeID,
@@ -334,7 +334,7 @@ func (h *nodesHandler) handleBatchCreate(w http.ResponseWriter, r *http.Request)
 			Protocol:     n.Protocol,
 			ParsedConfig: n.ParsedConfig,
 			ClashConfig:  n.ClashConfig,
-			Enabled:      n.Enabled,
+			Enabled:      n.resolvedEnabled(true),
 			Tag:          n.Tag,
 			Tags:         n.Tags,
 		})
@@ -1007,6 +1007,19 @@ func (r *nodeRequest) parseEnabled() {
 	if r.hasEnabled() {
 		_ = json.Unmarshal(r.RawEnabled, &r.Enabled)
 	}
+}
+
+// resolvedEnabled 解析 enabled:显式提供则用该值,未提供则用 def。
+// 创建/导入应传 def=true(节点默认启用;"禁用"功能已弃用),避免缺省被误建成禁用。
+func (r *nodeRequest) resolvedEnabled(def bool) bool {
+	if !r.hasEnabled() {
+		return def
+	}
+	var v bool
+	if err := json.Unmarshal(r.RawEnabled, &v); err != nil {
+		return def
+	}
+	return v
 }
 
 func (r *nodeRequest) hasChainProxyNodeID() bool {
