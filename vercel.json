@@ -1,0 +1,19 @@
+{
+  "builds": [
+    {
+      "src": "miaomiaowu/package.json",
+      "use": "@vercel/node",
+      "config": {
+        "functions": {
+          "api/**/*.ts": { "maxDuration": 60 }
+        }
+      }
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/miaomiaowu/index.html"
+    }
+  ]
+}
